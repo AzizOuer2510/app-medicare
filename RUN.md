@@ -64,6 +64,7 @@ flutter run -d emulator-5554   # émulateur Android (l'API passe par 10.0.2.2:80
 | Secrétaire | secretaire.sarah@medicare.com | Secret@2026 | Dr Sarah |
 | Médecin | dr.ahmed@medicare.com | Doctor@2026 | - |
 | Médecin | dr.sarah@medicare.com | Doctor@2026 | - |
+| Administrateur | admin@medicare.com | Admin@2026 | - |
 | Patient | patient@medicare.com (Patient Test) | Patient@2026 | Dr Ahmed (traitement prescrit) |
 | Patient | patient2@medicare.com (Amine Trabelsi) | Patient@2026 | Dr Ahmed (rendez-vous) |
 | Patient | patient3@medicare.com (Sonia Mejri) | Patient@2026 | Dr Sarah (traitement + rendez-vous) |

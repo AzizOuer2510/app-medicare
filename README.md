@@ -1,27 +1,270 @@
-# MediCare Full-Stack
+# MediCare — Application mobile de suivi médical
 
-Application mobile de suivi médical :
-- Frontend : Flutter
-- Backend : Spring Boot 3.5.x / Java 21
-- Database : PostgreSQL
-- Authentication : JWT
-- API : REST
+<p align="center"><img src="logo.png" alt="MediCare — Protect Your Health" width="220"></p>
 
-## Fonctionnalités incluses
+MediCare réunit dans une seule application mobile le parcours de soin d'un patient :
+prise de rendez-vous, traitements médicamenteux, suivi de santé et de nutrition.
+Médecins, secrétaires et administrateurs disposent chacun de leur espace.
 
-- Inscription / connexion avec JWT
-- Profil utilisateur
-- CRUD rendez-vous
-- CRUD médicaments
-- CRUD mesures de santé
-- Dashboard Flutter
-- Communication Flutter -> Spring Boot via Dio
-- Stockage sécurisé du JWT avec flutter_secure_storage
-- PostgreSQL via Spring Data JPA
-- Validation DTO
-- Gestion globale des erreurs
+| Couche | Technologie |
+| --- | --- |
+| Frontend | Flutter (Android, iOS, Web, Windows) — Riverpod, Dio |
+| Backend | Spring Boot 3.5 / Java 21 — API REST |
+| Base de données | H2 fichier en développement (profil `dev`), PostgreSQL en production |
+| Sécurité | JWT, BCrypt, vérification email (OTP), double vérification, codes de récupération |
+| IA (optionnelle) | Ollama en local : `llama3.2` (texte) et `llava` (photos) |
+| OCR | Tesseract (lecture des ordonnances) |
 
-## 1. Base de données de développement
+## Sommaire
+
+1. [Démarrage rapide](#démarrage-rapide)
+2. [Comptes de test](#comptes-de-test)
+3. [Acteurs et privilèges](#acteurs-et-privilèges)
+4. [Fonctionnalités par module](#fonctionnalités-par-module)
+5. [Scénarios de test](#scénarios-de-test)
+6. [Documentation technique](#documentation-technique)
+
+---
+
+## Démarrage rapide
+
+Le guide détaillé (Windows, téléphone physique, ports, problèmes fréquents) est dans [`RUN.md`](RUN.md).
+
+```powershell
+# 1. Backend (Java 21 requis) — base H2 locale + comptes de démonstration
+cd backend
+mvn spring-boot:run "-Dspring-boot.run.profiles=dev"
+
+# 2. Frontend, dans un second terminal
+cd frontend
+flutter pub get
+flutter run -d chrome
+```
+
+- **API :** `http://localhost:8082/api`.
+- **Émulateur Android :** l'application utilise automatiquement `10.0.2.2:8082`.
+- **Téléphone en USB :** lancer `adb reverse tcp:8082 tcp:8082`, puis
+  `flutter run -d <appareil> --dart-define=API_BASE_URL=http://localhost:8082/api`.
+- **Fonctions IA (facultatif) :** `ollama pull llama3.2`, `ollama pull llava`, puis `ollama serve`.
+  Sans Ollama, les écrans IA passent en mode démonstration.
+
+---
+
+## Comptes de test
+
+Ces comptes sont créés **automatiquement au démarrage du backend en profil `dev`**
+(jamais en production). Ils sont déjà vérifiés et sans double vérification :
+la connexion se fait directement, sans code email.
+
+| Acteur | Email | Mot de passe | Rattachement | Données préremplies |
+| --- | --- | --- | --- | --- |
+| Patient | `patient@medicare.com` (Patient Test) | `Patient@2026` | Suivi par **Dr Ahmed** (traitement prescrit) | Constantes normales, poids en baisse |
+| Patient | `patient2@medicare.com` (Amine Trabelsi) | `Patient@2026` | Suivi par **Dr Ahmed** (rendez-vous) | Hypertension, surpoids, une mesure prise en consultation par Dr Ahmed |
+| Patient | `patient3@medicare.com` (Sonia Mejri) | `Patient@2026` | Suivie par **Dr Sarah** (traitement + rendez-vous) | Glycémie élevée et fièvre récente (alertes) |
+| Médecin | `dr.ahmed@medicare.com` | `Doctor@2026` | Patients : Patient Test, Amine Trabelsi | — |
+| Médecin | `dr.sarah@medicare.com` | `Doctor@2026` | Patiente : Sonia Mejri | — |
+| Secrétaire | `secretaire.ahmed@medicare.com` | `Secret@2026` | Secrétaire de Dr Ahmed | — |
+| Secrétaire | `secretaire.sarah@medicare.com` | `Secret@2026` | Secrétaire de Dr Sarah | — |
+| Administrateur | `admin@medicare.com` | `Admin@2026` | — | — |
+
+Chaque patient dispose de 30 jours de mesures, de 14 jours de repas et
+d'hydratation, et d'objectifs de santé : les graphiques, statistiques, alertes
+et l'export PDF sont visibles dès la première connexion.
+
+> Ces mots de passe sont publics : ils servent uniquement aux tests en local.
+> Pour réinitialiser toutes les données, arrêter le backend et supprimer `backend/data/`.
+
+---
+
+## Acteurs et privilèges
+
+### Les acteurs
+
+| Acteur | Rôle technique | Description |
+| --- | --- | --- |
+| **Visiteur** | — | Personne non connectée : inscription, connexion, récupération du compte. |
+| **Patient** | `USER` | Gère ses rendez-vous, consulte ses traitements, tient son suivi santé et nutrition. |
+| **Secrétaire** | `USER` + affectation à un médecin | Patient qui, en plus, gère l'agenda du médecin auquel un administrateur l'a affecté. |
+| **Médecin** | `DOCTOR` | Prescrit, planifie les traitements et suit la santé de ses patients. |
+| **Administrateur** | `ADMIN` | Gère les rôles, les affectations des secrétaires, les fusions de comptes, les incidents et l'audit. |
+
+### Le lien médecin ↔ patient, partagé entre les modules
+
+Un médecin **suit** un patient dès que l'une de ces deux conditions est remplie :
+
+- **Médicaments :** il lui a prescrit un traitement (dépôt d'ordonnance) ;
+- **Rendez-vous :** le patient a un rendez-vous non annulé avec lui.
+
+Ce lien donne au médecin l'accès au **Suivi santé et nutrition** du patient.
+Un médecin ne voit jamais les données d'un patient qu'il ne suit pas.
+
+### Matrice des privilèges
+
+Légende : ✅ autorisé · 👁 lecture seule · ❌ refusé · — sans objet
+
+| Fonctionnalité | Visiteur | Patient | Secrétaire | Médecin | Admin |
+| --- | :---: | :---: | :---: | :---: | :---: |
+| **Authentification et compte** | | | | | |
+| S'inscrire, se connecter, mot de passe oublié | ✅ | — | — | — | — |
+| Profil, mot de passe, double vérification, codes de récupération | ❌ | ✅ | ✅ | ✅ | ✅ |
+| Demander un rôle (Médecin attribué automatiquement, Administrateur sur validation) | ❌ | ✅ | ✅ | — | — |
+| Demander le rapprochement de deux comptes | ❌ | ✅ | ✅ | ❌ | ❌ |
+| Valider les rôles et les fusions, déclarer un incident, consulter l'audit | ❌ | ❌ | ❌ | ❌ | ✅ |
+| **Rendez-vous** | | | | | |
+| Créer, modifier, annuler ses propres rendez-vous | ❌ | ✅ | ✅ | — | ✅ |
+| Gérer les rendez-vous des patients de son médecin (espace secrétaire) | ❌ | ❌ | ✅ | ❌ | ✅ |
+| Affecter une secrétaire à un médecin | ❌ | ❌ | ❌ | ❌ | ✅ |
+| **Médicaments** | | | | | |
+| Consulter ses traitements, horaires de prise, historique et ordonnances | ❌ | 👁 | 👁 | — | — |
+| Déposer une ordonnance (OCR) et créer le planning du patient | ❌ | ❌ | ❌ | ✅ | ✅ |
+| Modifier ou arrêter un traitement, gérer le stock et les prises | ❌ | ❌ | ❌ | ✅ (ses prescriptions) | ✅ |
+| Consulter les patients suivis et leur observance | ❌ | ❌ | ❌ | ✅ | ❌ |
+| **Suivi santé et nutrition** | | | | | |
+| Tableau de bord, mesures, repas, hydratation, objectifs (ses données) | ❌ | ✅ | ✅ | — | ✅ |
+| Statistiques, export PDF, analyse santé IA (ses données) | ❌ | ✅ | ✅ | — | ✅ |
+| Reconnaissance des aliments par IA, NutriCoach | ❌ | ✅ | ✅ | — | ✅ |
+| Liste de ses patients avec dernières constantes et alertes | ❌ | ❌ | ❌ | ✅ | ❌ |
+| Consulter le suivi complet d'un patient suivi | ❌ | ❌ | ❌ | 👁 | ❌ |
+| Ajouter une mesure de consultation à un patient suivi | ❌ | ❌ | ❌ | ✅ | ❌ |
+| Modifier ou supprimer une mesure | ❌ | ✅ ses saisies | ✅ ses saisies | ✅ uniquement les siennes | ✅ ses saisies |
+| Ajuster les objectifs d'un patient suivi | ❌ | ❌ | ❌ | ✅ | ❌ |
+| Repas et hydratation d'un patient suivi | ❌ | ❌ | ❌ | 👁 | ❌ |
+| Données de santé d'un autre utilisateur non suivi | ❌ | ❌ | ❌ | ❌ | ❌ |
+
+Toutes ces règles sont vérifiées **côté serveur**. Une tentative interdite
+renvoie `401` (non connecté), `403` (droit insuffisant) ou `404` (patient non suivi).
+
+---
+
+## Fonctionnalités par module
+
+### 1. Authentification et sécurité du compte
+
+- Inscription avec choix du rôle (Patient, Médecin, Administrateur sur validation) et vérification de l'email par code à 6 chiffres.
+- Connexion par email ou identifiant, connexion sans mot de passe par code email, connexion avec un code de récupération.
+- Double vérification par email, avec 10 codes de récupération à usage unique.
+- Mot de passe oublié : code par email valable 10 minutes, 5 essais maximum.
+- Politique de mots de passe : 12 caractères minimum, refus des mots de passe divulgués (Pwned Passwords), historique des 5 derniers.
+- Limitation des tentatives par IP, par compte et par code.
+- Profil : nom, téléphone, date de naissance, bio, photo ; changement de mot de passe.
+- Écran « Sécurité et accès » : vérifier son email, activer la double vérification, renouveler ses codes, demander un rôle, rapprocher deux comptes.
+- Administration : validation des demandes de rôle, examen des fusions de comptes et des doublons, déclaration d'incident (révocation des sessions), journal d'audit.
+- Session expirée : retour automatique à la connexion, sans perte du jeton en cas de simple coupure réseau.
+
+### 2. Rendez-vous
+
+- Prise de rendez-vous avec un médecin inscrit : date, heure, motif, type de consultation.
+- Agenda (vue calendrier) ou liste, recherche par médecin ou motif, filtres par statut (planifié, confirmé, terminé, annulé).
+- Modification, annulation et suppression ; contrôle des conflits d'horaire.
+- Synthèse : total, rendez-vous à venir, confirmés.
+- Suggestion de spécialité selon le motif et proposition d'un créneau libre dans les 30 jours.
+- Estimation du risque d'absence (non-confirmation, délai, historique d'annulations).
+- Ajout de 10 rendez-vous d'exemple pour les démonstrations.
+- **Espace secrétaire :** liste des patients, création, modification et suppression des rendez-vous du médecin affecté, envoi manuel des rappels.
+- **Rappels automatiques** par email (et SMS si configuré) 24 h avant le rendez-vous.
+- **Administration :** affectation des secrétaires aux médecins.
+
+### 3. Médicaments
+
+- **Médecin :** dépôt d'une ordonnance (photo ou PDF) pour un patient, lecture automatique (OCR) qui propose les médicaments, création du planning de prise.
+- Fiche traitement : dosage, forme, fréquence, horaires de prise, jours, dates de début et de fin, instructions, notes.
+- Modification, archivage et arrêt d'un traitement sans effacer l'historique.
+- Gestion du stock : quantité, seuil d'alerte, réapprovisionnement, estimation des jours restants.
+- Prises du jour : effectuée, manquée, ignorée ou reportée, avec historique par médicament.
+- Statistiques d'observance (jour, semaine, mois) pour le patient et pour le médecin.
+- Notifications locales de rappel de prise sur le téléphone.
+- Assistant traitement : réponses aux questions sur le planning en cours.
+- **Patient :** consultation de ses traitements, de son agenda de prises, de ses ordonnances et de son historique.
+- **Médecin :** liste des patients suivis, prescriptions et observance par patient.
+
+### 4. Suivi santé et nutrition
+
+**Santé**
+- Mesures : poids, fréquence cardiaque, tension artérielle, température, glycémie (g/L), avec date, heure et note.
+- Historique filtré par période (7 j, 30 j, 3 mois, 6 mois, tout) et par type de mesure ; modification et suppression.
+- Tableau de bord : dernières valeurs, flèches de tendance, IMC calculé avec sa catégorie, courbes du poids et de la fréquence cardiaque.
+- Objectifs personnels : taille, poids cible, calories et eau quotidiennes, notes.
+
+**Nutrition**
+- Journal alimentaire : petit-déjeuner, déjeuner, dîner, collation, avec date, heure, aliments, quantités et commentaire.
+- Base de 44 aliments : calories, protéines, glucides, lipides et fibres calculés selon la quantité.
+- Synthèse du jour : nombre de repas, calories par rapport à l'objectif, macronutriments.
+- Hydratation : ajout rapide ou quantité libre, progression par rapport à l'objectif, historique sur 7 jours.
+
+**Analyse**
+- Statistiques sur 7 j, 30 j, 3 mois ou 6 mois : courbe de chaque constante (minimum, moyenne, maximum, variation), calories par jour, répartition des macronutriments, hydratation moyenne.
+- Santé et nutrition présentées côte à côte (poids, apports, hydratation), sans diagnostic.
+- Export PDF du rapport (objectifs, statistiques, historique des mesures, journal alimentaire).
+
+**Intelligence artificielle (Ollama, locale)**
+- Analyse santé : état général, alertes automatiques (fièvre, hyper/hypoglycémie, hypertension, tachycardie…) et recommandations.
+- Reconnaissance des aliments par photo ou description, avec correction possible avant enregistrement.
+- NutriCoach : assistant nutritionnel conversationnel.
+
+**Espace médecin**
+- Liste des patients suivis, avec l'origine du lien (traitement ou rendez-vous), les dernières constantes et les alertes des 30 derniers jours.
+- Consultation complète du suivi d'un patient ; repas et hydratation en lecture seule.
+- Mesures de consultation signées du nom du médecin : le patient les voit sans pouvoir les modifier.
+- Ajustement des objectifs du patient, analyse IA et export PDF à son nom.
+
+---
+
+## Scénarios de test
+
+| # | Connexion | Étapes | Résultat attendu |
+| --- | --- | --- | --- |
+| 1 | `patient@medicare.com` | Menu → Suivi santé et nutrition | Tableau de bord rempli : IMC « corpulence normale », courbes, nutrition et hydratation du jour |
+| 2 | `patient@medicare.com` | Mesures → Ajouter une mesure → température 38,6 | La mesure apparaît ; l'analyse santé IA affiche une alerte « Hyperthermie » |
+| 3 | `patient@medicare.com` | Nutrition → Ajouter un repas → Base d'aliments → Riz blanc cuit 150 g | Calories et macronutriments calculés automatiquement |
+| 4 | `patient@medicare.com` | Icône PDF → 30 derniers jours | Rapport PDF avec logo, statistiques et historiques |
+| 5 | `patient2@medicare.com` | Mesures | La mesure du 12/11 porte « Mesure prise en consultation par Dr Ahmed » et un cadenas (non modifiable) |
+| 6 | `dr.ahmed@medicare.com` | Suivi santé et nutrition des patients | Deux patients : Patient Test (traitement) et Amine Trabelsi (rendez-vous, alertes) |
+| 7 | `dr.ahmed@medicare.com` | Ouvrir Amine Trabelsi → Mesure de consultation | La mesure est enregistrée et visible chez le patient |
+| 8 | `dr.ahmed@medicare.com` | Ouvrir un patient → Nutrition | Journal et hydratation en lecture seule (aucun bouton d'ajout) |
+| 9 | `dr.sarah@medicare.com` | Suivi santé et nutrition des patients | Uniquement Sonia Mejri : Dr Sarah ne voit pas les patients de Dr Ahmed |
+| 10 | `dr.ahmed@medicare.com` | Déposer une ordonnance pour un patient | Le patient apparaît dans « Patients suivis » et ses médicaments dans son espace |
+| 11 | `patient@medicare.com` | Rendez-vous → nouveau rendez-vous avec Dr Sarah | Le rendez-vous est créé ; Dr Sarah peut alors consulter le suivi santé de ce patient |
+| 12 | `secretaire.ahmed@medicare.com` | Rendez-vous → Espace secrétaire | Gestion des rendez-vous des patients de Dr Ahmed uniquement |
+| 13 | `admin@medicare.com` | Profil → Sécurité et accès → Administration | Demandes de rôle, fusions, doublons, incidents et journal d'audit |
+| 14 | `admin@medicare.com` | Rendez-vous → Espace secrétaire → Affectations | Affecter ou retirer une secrétaire à un médecin |
+
+Commandes de vérification automatique :
+
+```bash
+cd backend && mvn test
+cd frontend && flutter analyze && flutter test
+```
+
+---
+
+## Documentation technique
+
+### Architecture
+
+```text
+Flutter (Android / iOS / Web / Windows)
+   |  HTTP/JSON + JWT (Authorization: Bearer <token>)
+   v
+Spring Boot REST API  ──>  Ollama (IA locale, facultatif)
+   |  JPA / Hibernate
+   v
+H2 (dev) / PostgreSQL (production)
+```
+
+### Routes du module Suivi santé et nutrition
+
+| Ressource | Routes | Paramètre `patientId` (médecin) |
+| --- | --- | --- |
+| Mesures | `GET/POST /api/health-records`, `GET /api/health-records/history?days=`, `PUT/DELETE /api/health-records/{id}` | GET et POST |
+| Objectifs | `GET/POST /api/health-goals` | Oui |
+| Repas | `GET/POST /api/meals`, `GET /api/meals/today`, `/history`, `/stats/today`, `/stats/daily`, `PUT/DELETE /api/meals/{id}` | Lectures |
+| Hydratation | `GET/POST /api/hydration`, `GET /api/hydration/today`, `/history`, `DELETE /api/hydration/{id}` | Lectures |
+| Base d'aliments | `GET /api/foods?search=` | — |
+| Patients du médecin | `GET /api/health/patients` | — |
+| IA | `GET /api/health/ai/analyze`, `POST /api/nutrition/ai/analyze`, `POST /api/nutrition/chat` | Analyse santé |
+
+
+### 1. Base de données de développement
 
 Le profil `dev` utilise H2 dans un fichier local :
 `backend/data/medicare.mv.db`. Les données restent disponibles après l'arrêt
@@ -34,7 +277,7 @@ le backend tourne. Utilisez l'URL JDBC
 `jdbc:h2:file:./data/medicare;DB_CLOSE_ON_EXIT=FALSE`, l'utilisateur `sa` et
 un mot de passe vide. Le chemin du fichier est relatif au dossier `backend`.
 
-## 2. Backend
+### 2. Backend
 
 ```bash
 cd backend
@@ -52,7 +295,7 @@ API : http://localhost:8082
 Le port API peut être modifié avec la variable d'environnement `SERVER_PORT`.
 Pour Android Emulator, le frontend utilise `10.0.2.2:8082` pour atteindre le localhost de la machine.
 
-## 3. Frontend
+### 3. Frontend
 
 Le dossier Flutter contient le code applicatif. Générer les fichiers plateformes :
 
@@ -87,7 +330,7 @@ L'adresse doit inclure `/api`. Pour l'émulateur Android, utiliser
 `http://10.0.2.2:8099/api`. Après un changement de `--dart-define`, arrêter
 l'application Flutter et la relancer avec la nouvelle commande.
 
-## Comptes
+### Comptes
 
 Inscription via l'écran Register. Le mot de passe est hashé avec BCrypt.
 Le token JWT est retourné après login et envoyé ensuite dans :
@@ -96,19 +339,7 @@ Le token JWT est retourné après login et envoyé ensuite dans :
 Authorization: Bearer <token>
 ```
 
-## Architecture
-
-Flutter
-   |
-   | HTTP/JSON + JWT
-   v
-Spring Boot REST API
-   |
-   | JPA/Hibernate
-   v
-PostgreSQL
-
-## Authentification et récupération du compte
+### Authentification et récupération du compte
 
 Les écrans de connexion, d'inscription et de récupération s'adaptent au mobile
 et au bureau. Ils proposent le remplissage automatique, l'affichage des mots de
@@ -132,7 +363,7 @@ Sans configuration SMTP, l'API renvoie `503` et l'interface signale que l'envoi
 est indisponible. Aucun email n'est simulé. Pour un serveur SMTP local sans
 authentification, définir `MAIL_SMTP_AUTH=false` et `MAIL_STARTTLS=false`.
 
-### Lancement Windows avec Gmail
+#### Lancement Windows avec Gmail
 
 Arrêter le backend en cours avec `Ctrl+C`, puis lancer depuis la racine du projet :
 
@@ -167,7 +398,7 @@ Les mots de passe d'application exigent la validation Google en deux étapes.
 Le mot de passe d'application est distinct du mot de passe de connexion Gmail.
 [Création du code Google](https://support.google.com/accounts/answer/185833?hl=fr).
 
-### Diagnostic des erreurs email
+#### Diagnostic des erreurs email
 
 Le backend renvoie toujours `503` en cas d'indisponibilité email, avec un code
 stable traduit dans l'interface. Les journaux indiquent la catégorie et les
@@ -218,12 +449,12 @@ Les tests backend utilisent H2 et un service d'email simulé ; ils ne nécessite
 ni PostgreSQL ni identifiants SMTP et n'envoient aucun email réel.
 
 
-## Authentification avancée
+### Authentification avancée
 
 Après mise à jour, recompiler le backend (`mvn clean package`) et redémarrer
 le JAR, puis relancer Flutter. Le nouveau frontend utilise de nouvelles routes.
 
-### Vérification de l’identité
+#### Vérification de l’identité
 
 - Une inscription crée un compte **Patient**, vérifie l’email par OTP et active
   la double vérification. Aucun JWT n’est délivré avant le code email.
@@ -252,7 +483,7 @@ L’envoi SMTP doit être configuré pour ces parcours. Aucun code n’est affic
 par le backend, écrit dans les journaux ou envoyé fictivement en développement.
 Les codes sont transmis au service email configuré lors des actions de l’utilisateur.
 
-### Identifiants et rapprochement de comptes
+#### Identifiants et rapprochement de comptes
 
 L’email et l’identifiant facultatif sont normalisés et contrôlés sans distinction
 majuscules/minuscules. Les contraintes uniques de base de données protègent
@@ -294,7 +525,7 @@ Règles de fusion :
 Le remplacement de l’email d’authentification depuis l’édition ordinaire du
 profil est bloqué : il ne doit pas permettre de rediriger les codes de sécurité.
 
-### Politique des mots de passe
+#### Politique des mots de passe
 
 Les nouveaux mots de passe exigent au moins 12 caractères et au maximum
 72 octets UTF-8. La connexion aux anciens mots de passe n’impose pas rétroactivement
@@ -329,7 +560,7 @@ Le limiteur autorise au maximum 60 requêtes d’authentification par adresse IP
 sur 5 minutes, en plus des limites par compte et par OTP. Il est en mémoire,
 par instance ; une installation distribuée doit partager cette limitation.
 
-### Rôles et administration
+#### Rôles et administration
 
 L’inscription propose Patient, Médecin et Administrateur. Le rôle Médecin est
 attribué automatiquement lorsque l’utilisateur le demande ; l’adresse email doit
@@ -363,7 +594,7 @@ Hors profil `dev`, `JWT_SECRET` est obligatoire et doit contenir au moins
 restent après le redémarrage. Une base PostgreSQL et une clé secrète configurée
 sont nécessaires pour l'environnement de production.
 
-### Routes principales
+#### Routes principales
 
 | Parcours | Routes |
 | --- | --- |

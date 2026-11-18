@@ -31,6 +31,8 @@ public class DevSecretarySeeder implements ApplicationRunner {
         User secretary2 = account("Secrétaire Dr Sarah", "secretaire.sarah@medicare.com", "Secret@2026", Role.USER);
         assign(secretary1, ahmed);
         assign(secretary2, sarah);
+        // Administrateur de démonstration (dev uniquement) pour tester l'espace d'administration.
+        account("Admin MediCare", "admin@medicare.com", "Admin@2026", Role.ADMIN);
     }
 
     private User account(String fullName, String email, String password, Role role) {
