@@ -1,0 +1,6 @@
+The eng.traineddata and fra.traineddata files in this directory are from
+tesseract-ocr/tessdata_fast, commit
+87416418657359cb625c412a48b6e1d6d41c29bd.
+
+The trained data files are distributed under the Apache License, Version 2.0.
+See LICENSE in this directory.
