@@ -1,0 +1,917 @@
+# MediCare : vision complète de l'application
+
+MediCare est une application mobile de suivi médical. Elle relie trois types d'utilisateurs, le patient, le médecin et l'administrateur, autour de cinq modules qui partagent un même compte, une même API et une même base PostgreSQL.
+
+> Sources : code de `Dev_Mobile-main` (frontend Flutter `lib/`, backend Spring Boot `com.medicare.*`), base PostgreSQL `app_medicare` lue le 19/11/2026, `README.md` et `docs/M5-INTEGRATION.md`. Les flux d'exemple des modules 1, 2, 3 et 5 sont illustratifs ; celui du module 4 correspond à un test réel sur le téléphone. Les tables Médicaments et Documents étaient encore vides lors de l'analyse : leurs règles viennent du code.
+
+## Sommaire
+
+- [1. Vue d'ensemble](#1-vue-densemble)
+- [2. Modules](#2-modules)
+  - [M1 · Authentification et sécurité](#m1--authentification-et-sécurité)
+  - [M2 · Rendez-vous](#m2--rendez-vous)
+  - [M3 · Médicaments](#m3--médicaments)
+  - [M4 · Suivi santé et nutrition](#m4--suivi-santé-et-nutrition)
+  - [M5 · Notifications et documents](#m5--notifications-et-documents)
+- [3. Notions du cours utilisées dans le projet](#3-notions-du-cours-utilisées-dans-le-projet)
+- [4. Lancer l'application](#4-lancer-lapplication)
+
+---
+
+## 1. Vue d'ensemble
+
+### Architecture
+
+```text
+Téléphone Android (CRT NX1)  ──Wi-Fi──►  API Spring Boot :8082  ──JPA──►  PostgreSQL app_medicare (29 tables)
+Flutter · Dio · jeton JWT                 Java 21 · Spring Security     │
+                                          │                            └─► fichiers des documents : backend/storage/documents
+                                          └─► Ollama (IA locale, facultatif) : llama3.2, llava
+```
+
+| Couche | Technologie | Rôle |
+|---|---|---|
+| Application mobile | Flutter (Dart), Riverpod, Dio | Écrans, formulaires, navigation ; envoie chaque requête avec le jeton JWT |
+| Session sur le téléphone | `flutter_secure_storage` | Garde le jeton de connexion chiffré (`core/storage/token_storage.dart`) |
+| API | Spring Boot 3.5, Spring Security, JWT | Vérifie l'identité, le rôle et les droits à chaque requête |
+| Données | PostgreSQL 18 (`app_medicare`), H2 en mode démo | 29 tables créées par Hibernate (JPA) |
+| Fichiers | Disque du serveur | Documents médicaux du module 5 |
+| IA | Ollama en local | Analyse santé, lecture des mesures par photo, reconnaissance des aliments, NutriCoach ; mode démonstration sans Ollama |
+
+L'application Android appelle l'API sur `http://192.168.1.199:8082/api`, l'adresse Wi-Fi du PC. Le fichier `network_security_config.xml` autorise ce trafic HTTP uniquement vers ces adresses (`192.168.1.199` sur MAXBOX, `192.168.1.112` sur Mizej) et vers les adresses de développement. Si le PC change de réseau Wi-Fi, il faut reconstruire l'APK avec la nouvelle adresse.
+
+### Les acteurs
+
+| Acteur | Rôle technique | Ce qu'il fait |
+|---|---|---|
+| Visiteur | aucun | S'inscrit, se connecte, récupère son compte |
+| Patient | `USER` | Prend ses rendez-vous, suit ses traitements, tient son suivi santé et nutrition, gère ses documents |
+| Secrétaire | `USER` + affectation | Patient qui gère en plus l'agenda du médecin auquel l'administrateur l'a affecté |
+| Médecin | `DOCTOR` | Prescrit, planifie les traitements, suit la santé de ses patients, partage des rappels et des documents |
+| Administrateur | `ADMIN` | Valide les rôles et les fusions de comptes, affecte les secrétaires, consulte l'audit, administre les notifications |
+
+### Le lien médecin ↔ patient, partagé entre les modules
+
+Un médecin **suit** un patient dès que l'une de ces conditions est vraie :
+
+- **Médicaments :** il lui a prescrit un traitement (ligne active dans `doctor_patient_assignments`) ;
+- **Rendez-vous :** le patient a un rendez-vous non annulé avec lui (`appointment.status ≠ CANCELLED`).
+
+Ce lien ouvre au médecin le Suivi santé et nutrition du patient, les rappels de suivi et le dépôt de documents. Un médecin ne voit jamais les données d'un patient qu'il ne suit pas : toutes ces règles sont vérifiées côté serveur, qui répond `401`, `403` ou `404` en cas de refus.
+
+### Ce qui relie les modules
+
+| De | Vers | Comment |
+|---|---|---|
+| M1 Authentification | tous | Chaque table pointe vers `users` ; chaque requête porte le jeton JWT |
+| M2 Rendez-vous | M4 Suivi santé | Un rendez-vous non annulé donne au médecin l'accès au suivi du patient |
+| M3 Médicaments | M4 Suivi santé | Une ordonnance crée le lien `doctor_patient_assignments` |
+| M2, M3, M4 | M5 Notifications | Un intercepteur ajoute une notification après chaque écriture réussie |
+
+---
+
+## 2. Modules
+
+### M1 · Authentification et sécurité
+
+**Objectif :** Donner à chaque personne un compte sûr et un rôle, et protéger l'accès à toutes les autres données.
+
+Toutes les autres tables pointent vers users. Ce module gère qui est connecté, avec quel rôle, et garde une trace des actions sensibles.
+
+#### Fonctionnalités
+
+**Visiteur**
+
+- Inscription avec choix du rôle et vérification de l'email par code à 6 chiffres
+- Connexion par email ou identifiant, par code email sans mot de passe, ou avec un code de récupération
+- Mot de passe oublié : code par email valable 10 minutes, 5 essais
+
+**Tout utilisateur connecté**
+
+- Profil : nom, téléphone, date de naissance, bio, photo ; changement de mot de passe
+- Double vérification par email et 10 codes de récupération à usage unique
+- Demande de rôle et demande de rapprochement de deux comptes
+- Session conservée sur le téléphone ; retour à la connexion si le jeton expire
+
+**Administrateur**
+
+- Validation des demandes de rôle et des fusions de comptes
+- Recherche des doublons, déclaration d'incident (révocation des sessions), journal d'audit
+
+**Sécurité :** Mots de passe de 12 caractères minimum, refus des mots de passe divulgués (Pwned Passwords), historique des 5 derniers, limitation des tentatives par IP, par compte et par code.
+
+#### Écrans, API et tables
+
+| Écran de l'app | Fichier Flutter | Routes API (`/api…`) | Backend | Tables |
+|---|---|---|---|---|
+| Connexion | `login_page.dart` | **POST** /auth/login, /auth/login/recovery, /auth/passwordless/request, /auth/verify | AuthController | `users`, `email_challenge`, `recovery_code`, `security_audit_event` |
+| Inscription | `register_page.dart · verification_page.dart` | **POST** /auth/register, /auth/verify, /auth/challenges/{id}/resend | AuthController | `users`, `email_challenge` |
+| Mot de passe oublié | `forgot_password_page.dart` | **POST** /auth/forgot-password, /auth/reset-password | AuthController | `users (reset_code_*)`, `password_history` |
+| Profil et réglages | `profile_page.dart · edit_profile_page.dart · settings_page.dart` | **GET** /users/me · **PUT** /users/me · **PUT** /users/me/password | UserController | `users`, `password_history` |
+| Sécurité (MFA, demandes) | `security_page.dart` | **GET** /security · **POST** /security/challenge, /security/confirm, /security/role-requests, /security/merges | SecurityController | `users`, `email_challenge`, `recovery_code`, `role_change_request`, `account_merge_request` |
+| Administration | `security_page.dart (admin)` | **GET** /security/admin/audit, /duplicates · **POST** /security/admin/role-requests/{id}, /merges/{id} | SecurityController (ADMIN) | `security_audit_event`, `role_change_request`, `account_merge_request`, `users` |
+
+#### Données
+
+```mermaid
+erDiagram
+  users {
+    col id PK
+    col full_name
+    col email
+    col username
+    col password
+    col role
+    col email_verified
+    col mfa_enabled
+    col token_version
+    col merged_into_id FK
+    col phone_number
+    col birth_date
+    col bio
+  }
+  users ||--o{ users : "merged_into_id"
+  email_challenge {
+    col id PK
+    col user_id FK
+    col purpose
+    col code_hash
+    col attempts
+    col expires_at
+    col consumed_at
+    col token_version
+  }
+  users ||--o{ email_challenge : "user_id"
+  recovery_code {
+    col id PK
+    col user_id FK
+    col code_hash
+    col used_at
+  }
+  users ||--o{ recovery_code : "user_id"
+  password_history {
+    col id PK
+    col user_id FK
+    col password_hash
+    col changed_at
+  }
+  users ||--o{ password_history : "user_id"
+  role_change_request {
+    col id PK
+    col user_id FK
+    col reviewer_id FK
+    col previous_role
+    col requested_role
+    col status
+    col reason
+    col decision_note
+  }
+  users ||--o{ role_change_request : "user_id"
+  account_merge_request {
+    col id PK
+    col primary_user_id FK
+    col secondary_user_id FK
+    col reviewer_id FK
+    col status
+    col target_email
+  }
+  users ||--o{ account_merge_request : "primary_user_id"
+  users ||--o{ account_merge_request : "reviewer_id"
+  security_audit_event {
+    col id PK
+    col actor_id FK
+    col subject_id FK
+    col action
+    col detail
+    col occurred_at
+  }
+  users ||--o{ security_audit_event : "actor_id"
+```
+
+| Table | Rôle | Colonnes principales |
+|---|---|---|
+| `users` | centre de toute la base | `id` PK, `full_name`, `email`, `username`, `password`, `role`, `email_verified` |
+| `email_challenge` | codes envoyés par email | `id` PK, `user_id` FK → users, `purpose`, `code_hash`, `attempts`, `expires_at · consumed_at`, `token_version` |
+| `recovery_code` | codes de secours MFA | `id` PK, `user_id` FK → users, `code_hash`, `used_at` |
+| `password_history` | 5 derniers mots de passe | `id` PK, `user_id` FK → users, `password_hash`, `changed_at` |
+| `role_change_request` | demande de rôle | `id` PK, `user_id · reviewer_id` FK → users, `previous_role · requested_role`, `status`, `reason · decision_note` |
+| `account_merge_request` | fusion de doublons | `id` PK, `primary_user_id · secondary_user_id` FK → users, `reviewer_id` FK → users, `status`, `target_email` |
+| `security_audit_event` | journal · 6 lignes | `id` PK, `actor_id · subject_id` FK → users, `action`, `detail`, `occurred_at` |
+
+**Relations**
+
+- `users 1 ─ N` : email_challenge, recovery_code, password_history : secrets toujours stockés hachés
+- `users ─ users` : merged_into_id : un compte fusionné pointe vers le compte conservé
+- `users 1 ─ N` : role_change_request, account_merge_request : demandes validées par un ADMIN (reviewer_id)
+- `toutes les tables` : user_id, patient_id, doctor_id… pointent vers users.id
+
+#### Une action de bout en bout
+
+1. **Téléphone** : Écran de connexion : email et mot de passe de `patient@medicare.com`.
+2. **Wi-Fi** : `POST /api/auth/login` vers `192.168.1.199:8082`.
+3. **API** : `AuthService` compare le mot de passe au hash BCrypt de `users.password`.
+4. **PostgreSQL** : Lecture de `users` ; si la MFA est active, `INSERT email_challenge` et un code est envoyé.
+5. **Retour** : Un jeton JWT contenant `userId`, `role` et `token_version` est stocké dans l'app.
+
+#### Règles métier
+
+- **Révocation des jetons** : Chaque jeton porte la valeur de `users.token_version`. Un changement de mot de passe, de rôle, de réglage MFA ou une fusion de compte incrémente ce numéro, et tous les anciens jetons sont refusés.
+- **Aucun secret en clair** : Mots de passe, codes email et codes de secours sont stockés hachés (`password`, `code_hash`). La base ne permet pas de les relire.
+- **Mot de passe neuf** : `password_history` garde les 5 derniers hashs ; réutiliser l'un d'eux est refusé.
+- **Secrétaire = USER** : Il n'existe pas de rôle secrétaire : c'est un compte USER relié à un médecin dans `appointment_secretary_doctors` (module Rendez-vous).
+
+#### Notions du cours utilisées dans ce module
+
+`Form` + `GlobalKey<FormState>` + `TextFormField` avec `validate()` sur la connexion et l'inscription, `onSubmitted`, routes nommées (`/login`, `/register`, `/forgot-password`) avec `pushNamed`, `TabBar` dans l'écran Sécurité, `Image.asset` pour le logo, Dio + `fromJson` (`auth_user.dart`), session dans `flutter_secure_storage`.
+
+---
+
+### M2 · Rendez-vous
+
+**Objectif :** Organiser les consultations entre patients et médecins, avec l'aide des secrétaires.
+
+Un rendez-vous relie un patient et un médecin. Ce lien sert aussi au module Suivi santé : un rendez-vous non annulé autorise le médecin à voir le suivi du patient.
+
+#### Fonctionnalités
+
+**Patient**
+
+- Prise de rendez-vous avec un médecin : date, heure, motif, type de consultation
+- Agenda (calendrier) ou liste, recherche, filtres par statut
+- Modification, annulation, suppression ; contrôle des conflits d'horaire
+- Suggestion de spécialité selon le motif et d'un créneau libre dans les 30 jours
+- Estimation du risque d'absence
+
+**Secrétaire**
+
+- Liste des patients, création, modification et suppression des rendez-vous du médecin affecté
+- Envoi manuel des rappels
+
+**Administrateur**
+
+- Affectation des secrétaires aux médecins
+
+**Automatique**
+
+- Rappel par email (et SMS si configuré) 24 h avant le rendez-vous
+
+#### Écrans, API et tables
+
+| Écran de l'app | Fichier Flutter | Routes API (`/api…`) | Backend | Tables |
+|---|---|---|---|---|
+| Mes rendez-vous (patient) | `appointments_page.dart` | **GET** /appointments, /appointments/doctors, /appointments/statistics · **POST** · **PUT** · **DELETE** /appointments/{id} | AppointmentController | `appointment`, `users` |
+| Risque d'absence | `appointments_page.dart` | **GET** /appointments/{id}/no-show-risk | AppointmentController | `appointment (lecture)` |
+| Espace secrétaire | `secretary_appointments_page.dart` | **GET** /secretary/me, /secretary/doctors, /secretary/patients · **POST** · **PUT** /secretary/appointments/{id} | SecretaryAppointmentController | `appointment`, `appointment_secretary_doctors` |
+| Attribution des secrétaires (admin) | `secretary_appointments_page.dart` | **GET** · **POST** · **DELETE** /secretary/admin/assignments/{id} | SecretaryAppointmentController | `appointment_secretary_doctors` |
+| Envoi des rappels | `secretary_appointments_page.dart + tâche planifiée` | **POST** /secretary/reminders/run · cron toutes les heures | AppointmentReminderService | `appointment.reminder_sent_at` |
+
+#### Données
+
+```mermaid
+erDiagram
+  appointment {
+    col id PK
+    col user_id FK
+    col doctor_id FK
+    col doctor_name
+    col date_time
+    col appointment_type
+    col reason
+    col status
+    col reminder_sent_at
+  }
+  users ||--o{ appointment : "user_id"
+  users ||--o{ appointment : "doctor_id"
+  appointment_secretary_doctors {
+    col id PK
+    col secretary_id FK
+    col doctor_id FK
+  }
+  users ||--o{ appointment_secretary_doctors : "secretary_id"
+  users ||--o{ appointment_secretary_doctors : "doctor_id"
+```
+
+| Table | Rôle | Colonnes principales |
+|---|---|---|
+| `appointment` | rendez-vous | `id` PK, `user_id` FK → users (patient), `doctor_id` FK → users (médecin), `doctor_name`, `date_time`, `appointment_type`, `reason` |
+| `appointment_secretary_doctors` | secrétaire ↔ médecin | `id` PK, `secretary_id` FK → users, `doctor_id` FK → users |
+| `users` *(autre module)* | Authentification | `id` PK, `full_name`, `role`, `phone_number · email` |
+
+**Relations**
+
+- `users 1 ─ N` : appointment.user_id : un patient a plusieurs rendez-vous
+- `users 1 ─ N` : appointment.doctor_id : un médecin reçoit plusieurs patients
+- `users N ─ N` : appointment_secretary_doctors : une secrétaire gère l'agenda d'un médecin
+- `appointment → Suivi santé` : status ≠ CANCELLED donne au médecin l'accès au suivi du patient
+
+#### Une action de bout en bout
+
+1. **Téléphone** : Rendez-vous → nouveau rendez-vous avec Dr Sarah, date et motif.
+2. **Wi-Fi** : `POST /api/appointments` avec le jeton du patient.
+3. **API** : `AppointmentController` vérifie le médecin et le créneau ; le patient vient du jeton.
+4. **PostgreSQL** : `INSERT appointment (user_id, doctor_id, status='PLANNED')` puis `INSERT notifications` (module 5).
+5. **Effet** : Dr Sarah voit maintenant ce patient dans « Suivi santé et nutrition des patients ».
+
+#### Règles métier
+
+- **Rappel une seule fois** : Toutes les heures, la tâche planifiée cherche les rendez-vous PLANNED ou CONFIRMED proches dont `reminder_sent_at` est vide, envoie email et SMS, puis remplit la colonne.
+- **Périmètre de la secrétaire** : Une secrétaire ne voit et ne modifie que les rendez-vous des médecins qui lui sont attribués dans `appointment_secretary_doctors`.
+- **Annuler sans supprimer** : Un rendez-vous annulé garde sa ligne avec `status = CANCELLED` ; il ne donne plus accès au suivi santé.
+- **Nom du médecin copié** : `doctor_name` est enregistré dans le rendez-vous pour l'affichage, en plus de la clé `doctor_id`.
+
+#### Notions du cours utilisées dans ce module
+
+`ListView.builder()` pour la liste des rendez-vous, `TextField` de recherche avec `onChanged`, `Form` + `TextFormField`, `Card`, `InkWell`, `Navigator.push()` vers l'espace secrétaire.
+
+---
+
+### M3 · Médicaments
+
+**Objectif :** Transformer une ordonnance en planning de prises, puis suivre l'observance et le stock.
+
+Le médecin dépose une ordonnance, l'app en extrait les médicaments, puis le patient suit ses prises et son stock. Une ordonnance crée aussi le lien médecin-patient utilisé par le Suivi santé.
+
+#### Fonctionnalités
+
+**Médecin**
+
+- Dépôt d'une ordonnance (photo ou PDF) pour un patient, lecture automatique (OCR) qui propose les médicaments
+- Création et modification du planning de prise, arrêt d'un traitement sans effacer l'historique
+- Liste des patients suivis, prescriptions et observance par patient
+
+**Patient**
+
+- Consultation de ses traitements, de son agenda de prises, de ses ordonnances et de son historique
+- Prises du jour : effectuée, manquée, ignorée ou reportée
+- Notifications locales de rappel de prise sur le téléphone
+- Assistant traitement : questions sur le planning en cours
+
+**Stock**
+
+- Quantité, seuil d'alerte, réapprovisionnement, estimation des jours restants
+
+#### Écrans, API et tables
+
+| Écran de l'app | Fichier Flutter | Routes API (`/api…`) | Backend | Tables |
+|---|---|---|---|---|
+| Mes médicaments | `medications_page.dart` | **GET** /medications · **PUT** /medications/{id}/schedule · **POST** /medications/reminders/{id}/{action}, /snooze | MedicationController | `medication`, `medication_reminder`, `medication_stock_entry` |
+| Ajouter / modifier | `medication_form_page.dart` | **POST** /medications · **PUT** /medications/{id} | MedicationController | `medication`, `medication_reminder_times`, `medication_weekdays` |
+| Historique des prises | `medication_history_page.dart` | **GET** /medications/{id}/history · **POST** /medications/reminders/{id}/{action} | MedicationController | `medication_reminder`, `medication_stock_entry` |
+| Stock | `medication_stock_page.dart` | **GET** /medications/{id}/stock · **POST** /medications/{id}/stock/refill | MedicationController | `medication`, `medication_stock_entry` |
+| Statistiques d'observance | `medication_statistics_page.dart` | **GET** /medications/statistics, /medications/today | MedicationController | `medication_reminder (lecture)` |
+| Déposer une ordonnance (médecin) | `prescription_upload_page.dart` | **POST** /prescriptions/extract-medications, /prescriptions/upload · **GET** /prescriptions/patients | PrescriptionController (OCR Tesseract) | `prescription`, `medication`, `doctor_patient_assignments` |
+| Ordonnances | `prescriptions_page.dart` | **GET** /prescriptions · **PUT** · **DELETE** /prescriptions/{id} · **GET** /prescriptions/{id}/document | PrescriptionController | `prescription` |
+| Patients suivis (médecin) | `followed_patients_page.dart` | **GET** /prescriptions/patients/followed | PrescriptionController | `doctor_patient_assignments`, `medication_reminder` |
+
+#### Données
+
+```mermaid
+erDiagram
+  prescription {
+    col id PK
+    col doctor_id FK
+    col patient_id FK
+    col prescription_date
+    col diagnosis
+    col notes
+    col document_data
+    col document_name
+    col content_type
+    col archived
+  }
+  users ||--o{ prescription : "doctor_id"
+  users ||--o{ prescription : "patient_id"
+  medication {
+    col id PK
+    col user_id FK
+    col prescription_id FK
+    col name
+    col dosage
+    col pharmaceutical_form
+    col frequency_per_day
+    col units_per_dose
+    col start_date
+    col end_date
+    col status
+    col stock_quantity
+    col low_stock_threshold
+    col reminders_enabled
+    col version
+  }
+  users ||--o{ medication : "user_id"
+  prescription ||--o{ medication : "prescription_id"
+  medication_reminder {
+    col id PK
+    col medication_id FK
+    col date
+    col time
+    col status
+    col taken
+    col taken_at
+    col snoozed_until
+    col intake_note
+  }
+  medication ||--o{ medication_reminder : "medication_id"
+  medication_stock_entry {
+    col id PK
+    col medication_id FK
+    col reminder_id FK
+    col type
+    col quantity_change
+    col quantity_after
+    col note
+    col created_at
+  }
+  medication ||--o{ medication_stock_entry : "medication_id"
+  medication_reminder ||--o{ medication_stock_entry : "reminder_id"
+  medication_reminder_times {
+    col medication_id FK
+    col reminder_time
+    col time_order
+  }
+  medication ||--o{ medication_reminder_times : "medication_id"
+  medication_weekdays {
+    col medication_id FK
+    col weekday
+  }
+  medication ||--o{ medication_weekdays : "medication_id"
+  doctor_patient_assignments {
+    col id PK
+    col doctor_id FK
+    col patient_id FK
+    col active
+    col created_at
+  }
+  users ||--o{ doctor_patient_assignments : "doctor_id"
+  users ||--o{ doctor_patient_assignments : "patient_id"
+```
+
+| Table | Rôle | Colonnes principales |
+|---|---|---|
+| `prescription` | ordonnance | `id` PK, `doctor_id` FK → users, `patient_id` FK → users, `prescription_date`, `diagnosis · notes`, `document_data`, `document_name · content_type` |
+| `medication` | traitement | `id` PK, `user_id` FK → users, `prescription_id` FK → prescription, `name · dosage · pharmaceutical_form`, `frequency_per_day · units_per_dose`, `start_date · end_date`, `status` |
+| `medication_reminder` | une prise prévue | `id` PK, `medication_id` FK → medication, `date · time`, `status`, `taken · taken_at`, `snoozed_until`, `intake_note` |
+| `medication_stock_entry` | mouvement de stock | `id` PK, `medication_id` FK → medication, `reminder_id` FK → medication_reminder, `type`, `quantity_change · quantity_after`, `note · created_at` |
+| `medication_reminder_times` | heures de prise | `medication_id` FK → medication, `reminder_time`, `time_order` |
+| `medication_weekdays` | jours de prise | `medication_id` FK → medication, `weekday` |
+| `doctor_patient_assignments` | médecin ↔ patient | `id` PK, `doctor_id` FK → users, `patient_id` FK → users, `active`, `created_at` |
+
+**Relations**
+
+- `prescription 1 ─ N` : medication : les médicaments extraits d'une ordonnance
+- `medication 1 ─ N` : medication_reminder : une ligne par prise prévue
+- `medication 1 ─ N` : medication_reminder_times, medication_weekdays : le planning
+- `reminder 1 ─ N` : medication_stock_entry : chaque prise retire du stock, l'annuler le rend
+- `prescription → assignments` : déposer une ordonnance crée le lien médecin-patient s'il n'existe pas
+
+#### Une action de bout en bout
+
+1. **Téléphone** : Le patient appuie sur « Pris » pour une prise de 08:00 de son traitement.
+2. **Wi-Fi** : `POST /api/medications/reminders/{id}/taken`.
+3. **API** : `MedicationController` vérifie que la prise appartient au patient.
+4. **PostgreSQL** : `UPDATE medication_reminder` (TAKEN), `UPDATE medication.stock_quantity`, `INSERT medication_stock_entry` (INTAKE_DEDUCTION).
+5. **Retour** : Stock et taux d'observance mis à jour ; une notification « Médicaments » est créée.
+
+#### Règles métier
+
+- **Ordonnance dans la base** : Le fichier de l'ordonnance est stocké dans PostgreSQL (`document_data`, type `oid`), contrairement aux documents du module 5 stockés sur disque.
+- **Extraction sans enregistrement** : `/prescriptions/extract-medications` lit l'ordonnance par OCR et propose des médicaments ; rien n'est écrit tant que le médecin n'a pas choisi le patient et validé.
+- **Stock réversible** : Annuler une prise crée une entrée INTAKE_REFUND qui rend la dose, au lieu d'effacer l'historique.
+- **Accès au suivi santé** : Une ligne active dans `doctor_patient_assignments` donne au médecin l'accès au Suivi santé et nutrition du patient.
+
+#### Notions du cours utilisées dans ce module
+
+`Card` (`medication_card.dart`), `ListView` et `ListView.builder()`, formulaire `Form` + `TextFormField` (`medication_form_page.dart`), `Navigator.push()` vers le détail, l'historique et le stock, `fromJson` dans les modèles, notifications locales (`flutter_local_notifications`).
+
+---
+
+### M4 · Suivi santé et nutrition
+
+**Objectif :** Permettre au patient de suivre ses constantes, son alimentation et son hydratation, et au médecin de suivre ses patients.
+
+Toutes les tables de ce module appartiennent à un patient par user_id ; il lit les tables des modules Médicaments et Rendez-vous pour savoir quel médecin suit quel patient.
+
+#### Fonctionnalités
+
+**Santé**
+
+- Mesures : poids, fréquence cardiaque, tension, température, glycémie, avec date, heure et note
+- Formulaire de mesure organisé par appareil (tensiomètre, thermomètre, pèse-personne, lecteur de glycémie) : saisie manuelle ou lecture IA par photo
+- Historique filtré par période et par type de mesure ; modification et suppression
+- Tableau de bord : dernières valeurs, tendances, IMC et sa catégorie, courbes
+- IMC calculé avec le dernier poids mesuré (jamais le poids cible), échelle OMS : < 18,5 · 18,5–25 · 25–30 · ≥ 30
+- Objectifs : taille, poids cible, calories et eau quotidiennes
+
+**Nutrition**
+
+- Journal alimentaire par repas, avec aliments et quantités
+- Base de 44 aliments : nutriments calculés selon la quantité
+- Hydratation : ajout rapide ou quantité libre, progression, historique sur 7 jours
+
+**Analyse et IA**
+
+- Statistiques sur 7 j à 6 mois et export PDF du rapport
+- Analyse santé avec alertes (fièvre, hypertension, hyperglycémie…) : statut et urgence décidés par des seuils médicaux fixes, résumé et conseils rédigés par llama3.2
+- **Lecture d'une mesure par photo** (llava) : une photo par appareil, valeurs lues pré-remplies à côté de la photo, vérifiées et validées par le patient
+- Reconnaissance des aliments par photo ou description, NutriCoach (Ollama)
+- Réponses IA rapides : modèle préchargé au démarrage du backend et gardé en mémoire 60 min (`keep_alive`)
+
+**Volet IA : lecture d'une mesure par photo**
+
+1. Le patient appuie sur « Lire par photo » dans le bloc de l'appareil et photographie son écran (ou choisit une photo).
+2. L'app envoie l'image en base64 à `POST /api/health/ai/read-device` avec l'appareil : `BLOOD_PRESSURE`, `TEMPERATURE`, `WEIGHT` ou `GLYCEMIA`.
+3. Le serveur la transmet au modèle de vision llava (Ollama, en local), qui renvoie les chiffres lus en JSON.
+4. Le serveur vérifie que les valeurs sont plausibles, puis renvoie succès ou échec avec un message.
+5. Les valeurs pré-remplissent le formulaire, sur fond vert « Lu par l'IA — vérifiez ». Le patient corrige si besoin, coche « J'ai vérifié… », puis enregistre. **Rien n'est enregistré sans sa confirmation.**
+
+| Appareil (1 photo) | Valeurs lues | Contrôle serveur | Conversion |
+|---|---|---|---|
+| Tensiomètre | systolique, diastolique, pouls | SYS 60–260 mmHg, DIA 30–160 mmHg, SYS > DIA, pouls 30–220 bpm | — |
+| Thermomètre | température | 34–43 °C | °F → °C |
+| Pèse-personne | poids | 2–300 kg | lb → kg |
+| Lecteur de glycémie | glycémie | 0,2–6 g/L | mg/dL et mmol/L → g/L |
+
+Si aucun écran n'est reconnu ou si une valeur est hors plage, le message demande de reprendre la photo. Temps de lecture : 10 à 17 s (environ 60 s pour la première, le temps de charger le modèle).
+
+**Médecin**
+
+- Patients suivis avec dernières constantes et alertes
+- Mesures de consultation signées, ajustement des objectifs ; repas et eau en lecture seule
+
+#### Écrans, API et tables
+
+| Écran de l'app | Fichier Flutter | Routes API (`/api…`) | Backend | Tables |
+|---|---|---|---|---|
+| Tableau de bord | `health_dashboard_tab.dart` | **GET** /health-records, /meals/stats/today, /hydration/today, /health-goals · **POST** /hydration | plusieurs | `health_record`, `meal`, `hydration`, `health_goal` |
+| Mesures | `measures_tab.dart · measure_form.dart` | **GET** · **POST** · **PUT** · **DELETE** /health-records/{id} | HealthRecordController | `health_record`, `notifications` |
+| Lecture IA d'une mesure (photo) | `measure_form.dart` | **POST** /health/ai/read-device | HealthAiController → DeviceReadingService → Ollama llava | aucune (lecture seule ; l'enregistrement passe par **POST** /health-records) |
+| Nutrition | `nutrition_tab.dart · meal_form_page.dart` | **GET** · **POST** · **PUT** · **DELETE** /meals/{id}, /hydration/{id} · **GET** /foods | MealController, HydrationController, FoodController | `meal`, `hydration`, `food` |
+| Objectifs | `health_goals_page.dart` | **GET** · **POST** /health-goals | HealthGoalController | `health_goal` |
+| Statistiques, PDF, IA | `health_stats_page.dart · health_ai_page.dart · ai_food_page.dart · nutrition_chat_page.dart` | **GET** …/history, /health/ai/analyze · **POST** /nutrition/ai/analyze, /nutrition/chat | HealthAiController, NutritionAiController → Ollama | `health_record`, `meal`, `hydration` |
+| Patients suivis (médecin) | `doctor_health_patients_page.dart` | **GET** /health/patients, puis les routes avec ?patientId= | DoctorHealthController | `doctor_patient_assignments`, `appointment` |
+
+#### Données
+
+```mermaid
+erDiagram
+  health_record {
+    col id PK
+    col user_id FK
+    col recorded_by_id FK
+    col recorded_at
+    col weight
+    col heart_rate
+    col systolic
+    col diastolic
+    col temperature
+    col glycemia
+    col note
+  }
+  users ||--o{ health_record : "user_id"
+  users ||--o{ health_record : "recorded_by_id"
+  health_goal {
+    col id PK
+    col user_id FK
+    col updated_by_id FK
+    col height_cm
+    col target_weight
+    col daily_calorie_goal
+    col daily_water_goal_ml
+    col daily_steps_goal
+  }
+  users ||--o| health_goal : "user_id"
+  users ||--o{ health_goal : "updated_by_id"
+  meal {
+    col id PK
+    col user_id FK
+    col meal_type
+    col meal_date
+    col meal_time
+    col description
+    col comment
+    col calories
+    col protein
+    col carbs
+    col fat
+    col fiber
+  }
+  users ||--o{ meal : "user_id"
+  hydration {
+    col id PK
+    col user_id FK
+    col quantity_ml
+    col recorded_date
+    col recorded_time
+    col note
+  }
+  users ||--o{ hydration : "user_id"
+  food {
+    col id PK
+    col name
+    col category
+    col unit
+    col calories
+    col protein
+    col carbs
+    col fat
+    col fiber
+  }
+```
+
+| Table | Rôle | Colonnes principales |
+|---|---|---|
+| `health_record` | mesures | `id` PK, `user_id` FK → users, `recorded_by_id` FK → users (médecin), `recorded_at`, `weight · heart_rate`, `systolic / diastolic`, `temperature · glycemia` |
+| `health_goal` | 1 par patient | `id` PK, `user_id` FK → users UNIQUE, `updated_by_id` FK → users (médecin), `height_cm · target_weight`, `daily_calorie_goal`, `daily_water_goal_ml`, `daily_steps_goal` |
+| `meal` | journal alimentaire | `id` PK, `user_id` FK → users, `meal_type`, `meal_date · meal_time`, `description · comment`, `calories`, `protein · carbs · fat · fiber` |
+| `hydration` | verres d'eau | `id` PK, `user_id` FK → users, `quantity_ml`, `recorded_date · recorded_time`, `note` |
+| `food` | base d'aliments | `id` PK, `name · category · unit`, `calories`, `protein · carbs · fat · fiber` |
+| `doctor_patient_assignments · appointment` *(autre module)* | Médicaments · Rendez-vous | `doctor_id · patient_id` FK → users, `active`, `appointment.status` |
+
+**Relations**
+
+- `users 1 ─ N` : health_record, meal, hydration
+- `users 1 ─ 1` : health_goal (user_id UNIQUE)
+- `food ┄ meal` : pas de clé étrangère : valeurs nutritives copiées dans le repas
+- `assignments, appointment` : décident quel médecin voit le suivi d'un patient
+
+#### Une action de bout en bout
+
+1. **Téléphone** : Nutrition → Hydratation → ajout de 330 ml (test réel sur le CRT NX1, id 231).
+2. **Wi-Fi** : `POST /api/hydration`.
+3. **API** : `HydrationController` enregistre l'eau au nom de l'utilisateur du jeton.
+4. **PostgreSQL** : `INSERT hydration (user_id=6, quantity_ml=330)`.
+5. **Retour** : L'app recharge `/hydration/today` ; le total du jour augmente.
+
+#### Règles métier
+
+- **Mesure de consultation** : `recorded_by_id` renseigné : le patient voit la mesure avec un cadenas, sans pouvoir la modifier.
+- **Un seul jeu d'objectifs** : Enregistrer les objectifs met à jour la ligne existante grâce à `user_id UNIQUE`.
+- **Calculs non stockés** : IMC, moyennes et alertes sont recalculés à chaque appel ; aucune table ne les conserve.
+- **Notifications** : Seules les écritures sur `/health-records` créent une notification « Mesures de santé ».
+- **Lecture IA par photo** : la photo n'est ni stockée ni enregistrée ; seules les valeurs validées par le patient sont insérées dans `health_record`.
+- **IA sans hallucination** : sur une photo sans écran d'appareil, le modèle doit renvoyer null (consignes sans valeur d'exemple) ; le serveur refuse alors la lecture.
+
+#### Notions du cours utilisées dans ce module
+
+`TabBar` / `TabBarView` (Tableau de bord, Mesures, Nutrition dans `health_page.dart`), `Card`, `ListView`, `ListView.builder()` (NutriCoach), `ListView.separated()` (choix d'un aliment), `Form` + `TextFormField` + `validate()` (`measure_form.dart`, `meal_form_page.dart`), `CheckboxListTile` (confirmation des valeurs lues par l'IA), `TextField`, `Image.memory` (photo du repas et de l'écran de l'appareil), `dart:convert` (`base64Encode`), `Navigator.push()`.
+
+---
+
+### M5 · Notifications et documents
+
+**Objectif :** Informer chaque utilisateur de ce qui le concerne et centraliser ses documents médicaux.
+
+Le module ajouté par votre collègue. Les notifications sont créées automatiquement quand les modules 2, 3 et 4 écrivent dans la base ; les documents médicaux sont des fichiers sur disque décrits dans PostgreSQL.
+
+#### Fonctionnalités
+
+**Notifications**
+
+- Boîte de réception : lu / non lu, archives, badge du nombre de non-lus
+- Notifications automatiques après les actions des modules Rendez-vous, Médicaments et Suivi santé
+
+**Rappels**
+
+- Rappels personnels pour tous ; un médecin peut en créer pour ses patients suivis
+- Report, annulation ; l'administrateur relance les échecs et voit l'historique
+
+**Documents**
+
+- Dépôt, lecture, téléchargement, favoris, classement (ordonnance, analyse, autre)
+- Partage avec un médecin ou par lien QR protégé par un PIN, avec expiration et révocation
+- Lecture automatique d'un document, à confirmer avant enregistrement
+
+**Administrateur**
+
+- Envoi et gestion des notifications pour tous les utilisateurs
+
+#### Écrans, API et tables
+
+| Écran de l'app | Fichier Flutter | Routes API (`/api…`) | Backend | Tables |
+|---|---|---|---|---|
+| Notifications | `notifications_page.dart` | **GET** /notifications, /notifications/unread-count, /notifications/overview · **POST** /notifications/{id}/read, /archive, /read-all | NotificationController | `notifications` |
+| Rappels | `notifications_page.dart` | **GET** · **POST** /reminders · **PUT** /reminders/{id} · **POST** /reminders/{id}/cancel, /snooze, /retry | ReminderController | `reminders`, `reminder_change`, `notifications` |
+| Contacts de soin | `notifications_page.dart` | **GET** /notifications/care/contacts, /care/patients, /care/doctor | NotificationController | `patient_doctor`, `doctor_patient_assignments`, `appointment` |
+| Administration des notifications | `notification_admin_page.dart` | **GET** /notifications/admin, /admin/recipients, /deliveries · **POST** /notifications/admin | NotificationController (ADMIN) | `notifications`, `users` |
+| Documents médicaux | `documents_page.dart · document_preview_page.dart` | **GET** /documents, /documents/overview, /documents/{id}/content · **POST** /documents · **PUT** /documents/{id}/favorite, /doctor · **DELETE** | DocumentController | `medical_documents` |
+| Partage par lien | `document_shares_page.dart` | **POST** /documents/{id}/shares · **POST** …/shares/{id}/revoke · **GET** …/shares/{id}/accesses · page publique /share/document | DocumentShareController, SharedDocumentController | `document_shares`, `document_share_accesses` |
+| Analyse d'un document | `document_analysis_page.dart` | **POST** /documents/{id}/analysis · **POST** /documents/{id}/analysis/confirm | DocumentAnalysisController + worker toutes les 2 s | `document_analyses` |
+
+#### Données
+
+```mermaid
+erDiagram
+  notifications {
+    col id PK
+    col user_id FK
+    col type
+    col title
+    col message
+    col reference_id
+    col reminder_id
+    col read_at
+    col archived
+  }
+  users ||--o{ notifications : "user_id"
+  reminders {
+    col id PK
+    col user_id FK
+    col author_id FK
+    col title
+    col message
+    col type
+    col scheduled_for
+    col status
+    col sent_at
+    col delivery_failed_at
+  }
+  users ||--o{ reminders : "user_id"
+  users ||--o{ reminders : "author_id"
+  reminder_change {
+    col id PK
+    col reminder_id
+    col action
+    col actor_id
+    col actor_name
+    col changed_at
+  }
+  patient_doctor {
+    col patient_id
+    col doctor_id FK
+  }
+  users ||--o{ patient_doctor : "doctor_id"
+  medical_documents {
+    col id PK
+    col user_id FK
+    col shared_doctor_id FK
+    col title
+    col description
+    col category
+    col storage_key
+    col original_filename
+    col content_type
+    col size
+    col favorite
+  }
+  users ||--o{ medical_documents : "user_id"
+  users ||--o{ medical_documents : "shared_doctor_id"
+  document_shares {
+    col id PK
+    col document_id FK
+    col label
+    col token_hash
+    col pin_hash
+    col expires_at
+    col revoked_at
+    col access_count
+    col failed_attempts
+  }
+  medical_documents ||--o{ document_shares : "document_id"
+  document_share_accesses {
+    col id PK
+    col share_id FK
+    col accessed_at
+  }
+  document_shares ||--o{ document_share_accesses : "share_id"
+  document_analyses {
+    col id PK
+    col document_id FK
+    col status
+    col draft_json
+    col requested_by_id
+    col error
+  }
+  medical_documents ||--o| document_analyses : "document_id"
+```
+
+| Table | Rôle | Colonnes principales |
+|---|---|---|
+| `notifications` | boîte de réception | `id` PK, `user_id` FK → users, `type`, `title · message`, `reference_id · reminder_id`, `read_at`, `archived` |
+| `reminders` | rappel planifié | `id` PK, `user_id` FK → users (destinataire), `author_id` FK → users (auteur), `title · message · type`, `scheduled_for`, `status`, `sent_at · delivery_failed_at` |
+| `reminder_change` | historique d'un rappel | `id` PK, `reminder_id`, `action`, `actor_id · actor_name`, `changed_at` |
+| `patient_doctor` | contacts de soin | `patient_id`, `doctor_id` FK → users |
+| `medical_documents` | fichier sur disque | `id` PK, `user_id` FK → users (patient), `shared_doctor_id` FK → users (médecin), `title · description`, `category`, `storage_key`, `original_filename · content_type · size` |
+| `document_shares` | lien de partage | `id` PK, `document_id` FK → medical_documents, `label`, `token_hash · pin_hash`, `expires_at · revoked_at`, `access_count · failed_attempts` |
+| `document_share_accesses` | journal des ouvertures | `id` PK, `share_id` FK → document_shares, `accessed_at` |
+| `document_analyses` | lecture automatique | `id` PK, `document_id` FK → medical_documents UNIQUE, `status`, `draft_json`, `requested_by_id · error` |
+
+**Relations**
+
+- `users 1 ─ N` : notifications, reminders : ce que reçoit chaque utilisateur
+- `medical_documents 1 ─ N` : document_shares 1 ─ N document_share_accesses
+- `medical_documents 1 ─ 1` : document_analyses (document_id UNIQUE)
+- `modules 2, 3, 4 → notifications` : un intercepteur ajoute une notification après chaque écriture réussie
+
+#### Une action de bout en bout
+
+1. **Téléphone** : Documents médicaux → déposer une photo d'analyse sanguine.
+2. **Wi-Fi** : `POST /api/documents` (multipart, 10 Mo maximum).
+3. **API** : `DocumentStorageService` écrit le fichier dans `backend/storage/documents`.
+4. **PostgreSQL** : `INSERT medical_documents` avec `storage_key`, taille et catégorie ; le fichier lui-même n'est pas dans la base.
+5. **Retour** : Le document apparaît dans la liste ; il peut être partagé avec un médecin ou par lien.
+
+#### Règles métier
+
+- **Notifications automatiques** : Après une écriture réussie sur rendez-vous, médicaments, ordonnances, mesures de santé ou documents, une ligne est ajoutée dans `notifications`. Si cela échoue, l'action d'origine réussit quand même.
+- **Rappels livrés par une tâche** : Toutes les 15 s, les `reminders` PENDING dont `scheduled_for` est passé sont livrés : ils passent à SENT et créent une notification.
+- **Fichiers hors base** : Les documents sont sur disque (`storage_key`). Sauvegarder PostgreSQL ne suffit pas : il faut aussi copier `backend/storage/documents`.
+- **Lien protégé** : Un lien de partage a un jeton et un code PIN hachés, une date d'expiration, peut être révoqué, et chaque ouverture est notée dans `document_share_accesses`.
+
+#### Notions du cours utilisées dans ce module
+
+`NavigationBar` (barre de navigation inférieure, `care_workspace.dart`), `Navigator.pushReplacement()`, `FutureBuilder`, `Form` + `TextFormField`, `Card`, `InkWell`, `Image.memory` (aperçu), `Uri.parse` (lien de partage).
+
+
+---
+
+## 3. Notions du cours utilisées dans le projet
+
+Vérification faite dans le code Flutter (`frontend/lib`) pour chaque notion des supports de cours.
+
+### Chapitre 1 · Introduction (`S01 - Introduction.pptx`)
+
+| Notion | Utilisée ? | Où dans le projet |
+|---|---|---|
+| Flutter, cross-plateforme depuis une seule base de code | Oui | Même code pour Android (CRT NX1), Chrome (web) et Windows |
+| Projet Hello World, rendu des widgets (`runApp`, `build`) | Oui | `main.dart` : `runApp(ProviderScope(child: MediCareApp()))` |
+
+### Chapitre 2 · Widgets de base (`DevMobileWidgets.pptx`)
+
+| Notion | Utilisée ? | Où dans le projet |
+|---|---|---|
+| `Scaffold` | Oui | 36 écrans, par exemple `appointments_page.dart`, `health_page.dart` |
+| `AppBar` | Oui | 24 écrans |
+| `Column` / `Row` | Oui | Partout (173 `Column`, 120 `Row`) |
+| `Container` | Oui | 83 utilisations |
+| `Center` | Oui | 56 utilisations, notamment les écrans de chargement |
+| `Text` | Oui | Partout |
+| `Image` | Oui | `Image.asset` pour le logo (`auth_scaffold.dart`, `home_page.dart`), `Image.memory` pour la photo d'un repas, la photo de l'écran d'un appareil de mesure et l'aperçu d'un document |
+| `ElevatedButton` | Non | |
+| `FlatButton` | Non | |
+| `Card` | Oui | 37 écrans, par exemple `medication_card.dart`, `doctor_dashboard_page.dart` |
+
+### Chapitre 2.2 · Lists & Forms (`S02.2 - Lists & Forms.pptx`)
+
+| Notion | Utilisée ? | Où dans le projet |
+|---|---|---|
+| `ListView()` | Oui | 29 listes, par exemple `appointments_page.dart`, `ai_food_page.dart` |
+| `ListView.builder()` (`itemCount`, `itemBuilder`) | Oui | `appointments_page.dart`, `secretary_appointments_page.dart`, `nutrition_chat_page.dart` |
+| `GridView.count()` | Non | |
+| `GridView.builder()` | Non | |
+| `TextField` (`onChanged`, `onSubmitted`) | Oui | Recherche des rendez-vous et des documents ; `onSubmitted` sur la connexion et l'inscription |
+| `TextFormField` | Oui | 55 champs : connexion, inscription, mesures, repas, traitements |
+| `Form` + `GlobalKey<FormState>` + `validate()` | Oui | 18 formulaires, par exemple `login_page.dart`, `measure_form.dart`, `medication_form_page.dart` |
+| `FormState.save()` / `reset()` | Non | |
+| `StatelessWidget` | Oui | 58 widgets |
+| `StatefulWidget` (avec `setState`) | Oui | 17 `StatefulWidget` et 47 `ConsumerStatefulWidget` (variante Riverpod) |
+
+### Chapitre 4 · Routes & Navigation (`S04 - Routes & Navigation.pptx`)
+
+| Notion | Utilisée ? | Où dans le projet |
+|---|---|---|
+| `GestureDetector` | Non | |
+| `Navigator.push()` / `pop()` | Oui | 22 `push`, par exemple ouvrir un formulaire de mesure ou de traitement |
+| `Navigator.pushReplacement()` | Oui | `documents_page.dart`, `notifications_page.dart` |
+| Routes nommées (`routes: {}` + `pushNamed`) | Oui | `main.dart` déclare `/login`, `/register`, `/home`, `/profile`, `/security`… ; `pushNamed` dans `login_page.dart`, `home_page.dart` |
+| `pushReplacementNamed()` | Non | |
+| Passage de paramètres à une page | Oui | Par le constructeur de la page (`MealFormPage(meal: …)`, `MedicationFormPage(…)`) ; les `arguments` de `pushNamed` ne sont pas utilisés |
+| `Drawer` | Non | |
+| `BottomNavigationBar` | Oui | Sous sa forme Material 3 `NavigationBar`, dans `core/widgets/care_workspace.dart` (modules Notifications et Documents) |
+| `TabBar` | Oui | `health_page.dart` (Tableau de bord, Mesures, Nutrition) et `security_page.dart` |
+
+### Chapitre 5 · HTTP (`S05 - HTTP.pptx`)
+
+| Notion | Utilisée ? | Où dans le projet |
+|---|---|---|
+| `dart:convert` | Oui | `base64Encode` pour envoyer la photo d'un repas (`ai_food_page.dart`), `utf8` dans `auth_validation.dart` |
+| `json.encode()` / `json.decode()` | Non | Dio convertit le JSON automatiquement |
+| Sérialisation par classes modèles (`fromJson`) | Oui | 26 `fromJson`, par exemple `auth_user.dart`, modèles des médicaments |
+| `toJson()` | Non | |
+| Package `http` | Non | |
+| Package `dio` | Oui | `core/network/api_client.dart` : URL de base, jeton JWT ajouté à chaque requête |
+| Méthodes GET, POST, PUT, PATCH, DELETE | Oui | Toutes utilisées via Dio (voir les tableaux « De l'écran à la table ») |
+| `Uri` | Oui | `Uri.parse` dans `document_shares_page.dart` (lien de partage) |
+| `Future`, `async` / `await` | Oui | 351 `await`, 3 `FutureBuilder` dans le module Documents |
+
+### Chapitre 6 · Local Storage (`S06 - Local Storage.pptx`)
+
+| Notion | Utilisée ? | Où dans le projet |
+|---|---|---|
+| `SharedPreferences` | Non | La session utilise `flutter_secure_storage`, stockage clé-valeur chiffré |
+| Package `path` | Non | |
+| `sqflite` | Non | Les données sont sur le serveur (PostgreSQL) |
+| `Hive` | Non | |
+| Session utilisateur persistante | Oui | Jeton JWT gardé dans `flutter_secure_storage` (`token_storage.dart`), relu au démarrage pour rester connecté |
+
+---
+
+## 4. Lancer l'application
+
+| Mode | Commande | Base |
+|---|---|---|
+| Démo locale | `mvn spring-boot:run "-Dspring-boot.run.profiles=dev"` dans `backend` | H2 (`backend/data/medicare`) |
+| PostgreSQL + Wi-Fi | `powershell -NoProfile -ExecutionPolicy Bypass -File .\backend\start-dev-postgres.ps1` | PostgreSQL `app_medicare` |
+| Application Android | `flutter build apk --release --dart-define=API_BASE_URL=http://192.168.1.199:8082/api` puis installation par câble une seule fois | — |
+| Application web | `flutter run -d chrome` dans `frontend` | — |
+
+Comptes de démonstration (profil `dev`) : `patient@medicare.com` / `Patient@2026`, `dr.ahmed@medicare.com` / `Doctor@2026`, `admin@medicare.com` / `Admin@2026`, et les autres listés dans `README.md`.

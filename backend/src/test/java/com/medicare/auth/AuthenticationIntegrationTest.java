@@ -35,6 +35,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @SpringBootTest(properties = {
         "app.security.rate-limit-enabled=false",
+        "app.notifications.module-events-enabled=false",
+        "app.jwt.secret=authentication-test-secret-key-with-at-least-32-characters",
+        "spring.jpa.hibernate.ddl-auto=create-drop",
         "app.bootstrap-admin.email=",
         "spring.datasource.url=jdbc:h2:mem:medicare;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE",
         "spring.datasource.username=sa",
@@ -42,7 +45,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
         "spring.datasource.driver-class-name=org.h2.Driver",
         "spring.jpa.database-platform=org.hibernate.dialect.H2Dialect"
 })
-@AutoConfigureMockMvc @ActiveProfiles("dev")
+@AutoConfigureMockMvc @ActiveProfiles("test")
 class AuthenticationIntegrationTest {
     private static final String PASSWORD = "InitialPassword123!";
     @Autowired MockMvc mvc;

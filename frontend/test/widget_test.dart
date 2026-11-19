@@ -485,7 +485,10 @@ void main() {
     Navigator.of(tester.element(find.text('Prescriptions des patients'))).pop();
     await tester.pumpAndSettle();
 
-    await tester.ensureVisible(find.text('Déposer une ordonnance'));
+    await Scrollable.ensureVisible(
+      tester.element(find.text('Déposer une ordonnance')), alignment: 0.5,
+    );
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Déposer une ordonnance'));
     await tester.pumpAndSettle();
     expect(find.byType(PrescriptionUploadPage), findsOneWidget);

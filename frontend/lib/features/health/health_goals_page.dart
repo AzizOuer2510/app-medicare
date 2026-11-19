@@ -121,8 +121,8 @@ class _HealthGoalsPageState extends ConsumerState<HealthGoalsPage> {
 
   @override
   Widget build(BuildContext context) {
-    final weight = _currentWeight ?? parseUserNumber(_targetWeight.text);
-    final bmi = computeBmi(weight, parseUserNumber(_height.text));
+    // L'IMC se calcule uniquement avec le dernier poids mesuré, jamais avec le poids cible.
+    final bmi = computeBmi(_currentWeight, parseUserNumber(_height.text));
 
     return Scaffold(
       backgroundColor: HealthColors.background,
@@ -326,12 +326,14 @@ class _BmiScale extends StatelessWidget {
                     height: 10,
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(6),
+                      // Échelle de 15 à 40 : les bandes s'arrêtent aux seuils
+                      // OMS 18,5 (0,14), 25 (0,40) et 30 (0,60).
                       gradient: const LinearGradient(colors: [
-                        HealthColors.pressure,
-                        HealthColors.success,
-                        HealthColors.temperature,
-                        HealthColors.heart,
-                      ]),
+                        HealthColors.pressure, HealthColors.pressure,
+                        HealthColors.success, HealthColors.success,
+                        HealthColors.temperature, HealthColors.temperature,
+                        HealthColors.heart, HealthColors.heart,
+                      ], stops: [0, 0.14, 0.14, 0.40, 0.40, 0.60, 0.60, 1]),
                     ),
                   ),
                 ),
