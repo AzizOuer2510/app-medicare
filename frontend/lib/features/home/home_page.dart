@@ -5,6 +5,9 @@ import '../auth/authentication_state.dart';
 import '../health/health_page.dart';
 import '../medications/medications_page.dart';
 import 'doctor_dashboard_page.dart';
+import '../notifications/pages/notifications_page.dart';
+import '../notifications/widgets/notification_badge.dart';
+import '../documents/pages/documents_page.dart';
 
 const _deepTeal = Color(0xFF07575E);
 const _brightTeal = Color(0xFF0C7778);
@@ -48,6 +51,7 @@ class HomePage extends ConsumerWidget {
           ],
         ),
         actions: [
+          const NotificationBadgeButton(),
           IconButton(
             tooltip: 'Profil',
             onPressed: () => Navigator.pushNamed(context, '/profile'),
@@ -116,6 +120,22 @@ class HomePage extends ConsumerWidget {
                       description:
                           'Mesures, repas, hydratation, statistiques et analyses IA.',
                       page: const HealthPage(),
+                    ),
+                    _ModuleCard(
+                      icon: Icons.notifications_active_outlined,
+                      color: _brightTeal,
+                      badgeColor: const Color(0xFFF0B66A),
+                      title: 'Notifications et rappels',
+                      description: 'Vos informations et rappels de suivi.',
+                      page: const NotificationsPage(),
+                    ),
+                    _ModuleCard(
+                      icon: Icons.folder_shared_outlined,
+                      color: const Color(0xFF398A67),
+                      badgeColor: const Color(0xFF65D3CA),
+                      title: 'Documents médicaux',
+                      description: 'Consultez et partagez vos documents médicaux.',
+                      page: const DocumentsPage(),
                     ),
                   ],
                 ),

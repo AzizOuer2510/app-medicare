@@ -48,3 +48,5 @@ app:
     base-url: ${OLLAMA_URL:http://localhost:11434}
     chat-model: ${OLLAMA_CHAT_MODEL:llama3.2}
     vision-model: ${OLLAMA_VISION_MODEL:llava}
+    # Garde le modèle chargé entre deux appels (réponses rapides après le premier chargement)
+    keep-alive: ${OLLAMA_KEEP_ALIVE:60m}

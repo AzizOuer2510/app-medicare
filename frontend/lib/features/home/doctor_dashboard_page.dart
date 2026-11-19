@@ -9,6 +9,9 @@ import 'followed_patients_page.dart';
 import '../medications/medication.dart';
 import '../medications/prescriptions_page.dart';
 import '../medications/prescription_upload_page.dart';
+import '../notifications/pages/notifications_page.dart';
+import '../notifications/widgets/notification_badge.dart';
+import '../documents/pages/documents_page.dart';
 
 class DoctorDashboardPage extends ConsumerStatefulWidget {
   const DoctorDashboardPage({required this.user, super.key});
@@ -114,6 +117,7 @@ class _DoctorDashboardPageState extends ConsumerState<DoctorDashboardPage> {
             semanticLabel: 'MediCare',
           ),
           actions: [
+            const NotificationBadgeButton(),
             IconButton(
               tooltip: 'Profil',
               onPressed: () => Navigator.pushNamed(context, '/profile'),
@@ -216,6 +220,26 @@ class _DoctorDashboardPageState extends ConsumerState<DoctorDashboardPage> {
                     ),
                   ),
                 ],
+              ),
+              Card(
+                child: ListTile(
+                  leading: const Icon(Icons.notifications_active_outlined),
+                  title: const Text('Notifications et rappels'),
+                  subtitle: const Text('Vos notifications et rappels pour vos patients.'),
+                  onTap: () => Navigator.push(context, MaterialPageRoute(
+                    builder: (_) => const NotificationsPage(),
+                  )),
+                ),
+              ),
+              Card(
+                child: ListTile(
+                  leading: const Icon(Icons.folder_shared_outlined),
+                  title: const Text('Documents médicaux'),
+                  subtitle: const Text('Déposez et consultez les documents partagés de vos patients.'),
+                  onTap: () => Navigator.push(context, MaterialPageRoute(
+                    builder: (_) => const DocumentsPage(),
+                  )),
+                ),
               ),
               if (_error != null)
                 Card(

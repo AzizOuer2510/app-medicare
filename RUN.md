@@ -1,5 +1,14 @@
 # Lancer le projet MediCare
 
+## Module M5 intégré dans cette destination
+
+Les notifications, rappels et documents de `D:\DevMobile\Medicare` sont intégrés dans
+`D:\DecMobilFinal\app-medicare`, en conservant les modules M1–M4 de ce dépôt.
+Le [rapport d'intégration](docs/M5-INTEGRATION.md) fournit le SQL, la matrice des rôles,
+les fichiers concernés et les vérifications. Sur ce poste, lancer depuis
+`D:\DecMobilFinal\app-medicare\backend` pour l'API sur **8082**, puis depuis
+`D:\DecMobilFinal\app-medicare\frontend` pour Flutter.
+
 Chemin du projet : `C:\Users\g701951\Downloads\App-mobile-MediCare-main\App-mobile-MediCare-main`
 
 Prérequis : Java 21+, Maven, Flutter, Chrome ou un émulateur Android.

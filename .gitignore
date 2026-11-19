@@ -18,6 +18,7 @@ ios/Pods/
 ios/.symlinks/
 
 # Environment
+backend/storage/
 .env
 *.log
 backend/data/

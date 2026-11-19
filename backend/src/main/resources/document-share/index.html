@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Document partagé · MediCare</title>
+  <link rel="stylesheet" href="/share/document/style.css">
+  <script src="/share/document/app.js" defer></script>
+</head>
+<body>
+  <header><span class="logo" aria-hidden="true">✚</span><strong>MediCare</strong><span class="header-tag">Partage de document</span></header>
+  <main>
+    <section class="intro">
+      <span class="eyebrow">UN ACCÈS PERSONNEL ET TEMPORAIRE</span>
+      <h1>Un document.<br>En toute confiance.</h1>
+      <p>Le patient vous a confié un document médical. Saisissez le code PIN qu’il vous a transmis séparément pour le consulter.</p>
+      <div class="features"><span>✓ Accès limité dans le temps</span><span>✓ Consultation signalée au patient</span></div>
+    </section>
+    <section class="card" id="unlock-panel" aria-labelledby="unlock-title">
+      <div class="lock-icon" aria-hidden="true">⌑</div>
+      <h2 id="unlock-title">Ouvrir le document</h2>
+      <p class="muted">Aucun compte à créer. Le lien et le code PIN suffisent.</p>
+      <form id="unlock-form">
+        <label for="pin">Code PIN à 6 chiffres</label>
+        <input id="pin" name="pin" type="password" inputmode="numeric" pattern="[0-9]{6}" minlength="6" maxlength="6" autocomplete="off" required placeholder="••••••" aria-describedby="pin-help">
+        <p id="pin-help" class="hint">Après 5 codes incorrects, le partage est bloqué.</p>
+        <button type="submit" id="unlock">Consulter le document <span aria-hidden="true">↗</span></button>
+      </form>
+      <p id="feedback" role="status" aria-live="polite"></p>
+      <p class="privacy">Ce lien donne accès uniquement au document choisi par le patient.</p>
+    </section>
+    <section class="card viewer" id="viewer" hidden aria-labelledby="document-name">
+      <div class="viewer-heading"><div><span class="eyebrow">DOCUMENT PARTAGÉ</span><h2 id="document-name"></h2></div><button id="close" class="secondary">Fermer l’aperçu</button></div>
+      <p class="muted" id="expiration"></p>
+      <div id="preview"></div>
+      <div class="download-row"><a id="download" class="button">Télécharger le document</a><span class="hint">Si l’aperçu PDF n’est pas disponible sur votre téléphone, téléchargez le fichier.</span></div>
+      <p class="privacy">L’expiration ou la révocation bloque les prochains accès au serveur. Une copie déjà téléchargée reste sur votre appareil.</p>
+    </section>
+  </main>
+  <footer>MediCare · Le patient garde le contrôle de ses partages.</footer>
+</body>
+</html>

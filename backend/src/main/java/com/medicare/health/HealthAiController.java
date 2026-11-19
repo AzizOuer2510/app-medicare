@@ -1,7 +1,9 @@
 package com.medicare.health;
 
+import com.medicare.common.ApiException;
 import com.medicare.nutrition.AiNutritionService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
@@ -18,6 +20,7 @@ public class HealthAiController {
     private final HealthGoalRepository goalRepo;
     private final HealthAccessService access;
     private final AiNutritionService aiService;
+    private final DeviceReadingService deviceReader;
 
     @GetMapping("/analyze")
     public Map<String, Object> analyze(@RequestParam(required = false) Long patientId, Authentication auth) {
@@ -49,12 +52,49 @@ public class HealthAiController {
             goalMap.put("targetWeight", goal.get().getTargetWeight());
         }
 
+        var instantAlerts = buildInstantAlerts(recent);
+        // Les alertes calculées sont transmises au modèle pour que son résumé ne les contredise pas.
+        List<String> alertLabels = instantAlerts.stream()
+                .map(a -> a.get("metric") + " (" + a.get("value") + ")")
+                .toList();
         Map<String, Object> result = recent.isEmpty()
                 ? aiService.emptyHealthResponse()
-                : aiService.analyzeHealthRecords(recordMaps, goalMap);
-        result.put("instantAlerts", buildInstantAlerts(recent));
+                : aiService.analyzeHealthRecords(recordMaps, goalMap, alertLabels);
+        result.put("instantAlerts", instantAlerts);
+        // Statut et urgence découlent des seuils médicaux fixes, pas du modèle de langage,
+        // pour que l'écran ne signale jamais une valeur normale comme anormale.
+        boolean red = instantAlerts.stream().anyMatch(a -> "red".equals(a.get("color")));
+        boolean orange = instantAlerts.stream().anyMatch(a -> "orange".equals(a.get("color")));
+        result.put("status", red ? "alerte" : orange ? "attention" : "bon");
+        result.put("statusColor", red ? "red" : orange ? "orange" : "green");
+        result.put("urgency", red ? "urgent" : orange ? "attention" : "normal");
+        result.put("alerts", List.of());
         result.put("recordCount", recent.size());
         return result;
+    }
+
+    public record DeviceReadingRequest(String device, String image) {}
+
+    /**
+     * Lecture IA d'une photo d'écran d'appareil (tensiomètre, thermomètre, balance, glucomètre).
+     * Ne fait que lire et vérifier : rien n'est enregistré sans la validation du patient.
+     */
+    @PostMapping("/read-device")
+    public Map<String, Object> readDevice(@RequestBody DeviceReadingRequest req) {
+        if (req.image() == null || req.image().isBlank()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "Ajoutez une photo de l'écran de l'appareil.");
+        }
+        if (req.image().length() > 8_000_000) {
+            throw new ApiException(HttpStatus.PAYLOAD_TOO_LARGE, "Image trop volumineuse (6 Mo maximum).");
+        }
+        DeviceReadingService.Device device;
+        try {
+            device = DeviceReadingService.Device.valueOf(String.valueOf(req.device()).toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            throw new ApiException(HttpStatus.BAD_REQUEST,
+                    "Appareil inconnu : BLOOD_PRESSURE, TEMPERATURE, WEIGHT ou GLYCEMIA attendu.");
+        }
+        return deviceReader.read(device, req.image());
     }
 
     /** Contrôle la valeur la plus récente de chaque constante (pas forcément issue de la même mesure). */

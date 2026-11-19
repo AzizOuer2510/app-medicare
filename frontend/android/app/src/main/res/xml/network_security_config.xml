@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Le backend MediCare de développement est servi en HTTP sur le réseau local.
+  Le HTTP non chiffré est autorisé UNIQUEMENT vers ces adresses ; tout le reste
+  (Ollama passe par le backend, Pwned Passwords, etc.) reste en HTTPS obligatoire.
+  Si l'adresse Wi-Fi du PC change, l'ajouter ici et reconstruire l'APK.
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <!-- PC de développement sur le Wi-Fi (MAXBOX : .199, Mizej : .112) -->
+        <domain includeSubdomains="false">192.168.1.199</domain>
+        <domain includeSubdomains="false">192.168.1.112</domain>
+        <!-- Câble USB (adb reverse) et émulateur Android -->
+        <domain includeSubdomains="false">localhost</domain>
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">10.0.2.2</domain>
+    </domain-config>
+</network-security-config>

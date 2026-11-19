@@ -1,0 +1,18 @@
+# Profil « pg » : base PostgreSQL locale à la place de H2.
+# À combiner avec le profil dev pour garder les comptes et données de démonstration :
+#   mvn spring-boot:run "-Dspring-boot.run.profiles=dev,pg"
+# Le mot de passe n'est jamais écrit ici : définir DB_PASSWORD avant le lancement
+# (voir backend/start-dev-postgres.ps1).
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/app_medicare}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+    hibernate:
+      ddl-auto: update
+  h2:
+    console:
+      enabled: false

@@ -23,6 +23,12 @@
     </properties>
 
     <dependencies>
+        <!-- M5: PDF text extraction; same PDFBox version already used by Tess4J. -->
+        <dependency>
+            <groupId>org.apache.pdfbox</groupId>
+            <artifactId>pdfbox</artifactId>
+            <version>3.0.5</version>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
