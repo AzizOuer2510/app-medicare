@@ -34,6 +34,10 @@ class Medication {
   final int? patientId;
   final String? patientName;
 
+  /// Médecin prescripteur : lui seul peut modifier ou supprimer le médicament.
+  final int? prescriberId;
+  final String? prescriberName;
+
   const Medication({
     required this.id,
     required this.name,
@@ -58,6 +62,8 @@ class Medication {
     this.packageQuantity,
     this.patientId,
     this.patientName,
+    this.prescriberId,
+    this.prescriberName,
   });
 
   factory Medication.fromJson(Map<String, dynamic> json) {
@@ -95,6 +101,8 @@ class Medication {
       packageQuantity: _number(json['packageQuantity']),
       patientId: _number(json['patientId'])?.toInt(),
       patientName: json['patientName']?.toString(),
+      prescriberId: _number(json['prescriberId'])?.toInt(),
+      prescriberName: json['prescriberName']?.toString(),
     );
   }
 

@@ -22,6 +22,9 @@ class TodayIntakesCard extends ConsumerStatefulWidget {
 
 class _TodayIntakesCardState extends ConsumerState<TodayIntakesCard> {
   List<MedicationReminder> _intakes = const [];
+
+  /// Prises des 7 derniers jours restées sans réponse : le patient peut encore les cocher.
+  List<MedicationReminder> _overdue = const [];
   bool _loading = true;
   String? _error;
   final Set<int> _busy = {};
@@ -44,11 +47,27 @@ class _TodayIntakesCardState extends ConsumerState<TodayIntakesCard> {
       _error = null;
     });
     try {
-      final response =
-          await ref.read(apiClientProvider).dio.get('/medications/today');
+      final dio = ref.read(apiClientProvider).dio;
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+      String day(DateTime d) =>
+          '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+      final results = await Future.wait([
+        dio.get('/medications/today'),
+        dio.get('/medications/intakes', queryParameters: {
+          'from': day(today.subtract(const Duration(days: 7))),
+          'to': day(today.subtract(const Duration(days: 1))),
+        }),
+      ]);
       if (!mounted) return;
       setState(() {
-        _intakes = medicationRemindersFromJson(response.data);
+        _intakes = medicationRemindersFromJson(results[0].data);
+        _overdue = medicationRemindersFromJson(results[1].data)
+            .where((r) => r.status == 'pending' || r.status == 'snoozed')
+            .toList()
+          ..sort((a, b) => a.date.compareTo(b.date) != 0
+              ? a.date.compareTo(b.date)
+              : a.time.compareTo(b.time));
         _loading = false;
       });
     } on DioException {
@@ -114,7 +133,7 @@ class _TodayIntakesCardState extends ConsumerState<TodayIntakesCard> {
                 const Icon(Icons.checklist_rounded, color: Color(0xFF078B8D)),
                 const SizedBox(width: 8),
                 const Expanded(
-                  child: Text('Mes prises d’aujourd’hui',
+                  child: Text('Mes prises',
                       style: TextStyle(
                           fontSize: 17,
                           fontWeight: FontWeight.w700,
@@ -127,7 +146,7 @@ class _TodayIntakesCardState extends ConsumerState<TodayIntakesCard> {
             ),
             const SizedBox(height: 4),
             const Text(
-              'Cochez chaque prise faite. Votre médecin suit vos réponses.',
+              'Cochez « Pris » ou « Non pris » pour chaque horaire. Votre médecin suit vos réponses.',
               style: TextStyle(fontSize: 13, color: Color(0xFF557278)),
             ),
             const SizedBox(height: 8),
@@ -141,20 +160,38 @@ class _TodayIntakesCardState extends ConsumerState<TodayIntakesCard> {
                 Expanded(child: Text(_error!)),
                 TextButton(onPressed: _load, child: const Text('Réessayer')),
               ])
-            else if (_intakes.isEmpty)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 12),
-                child: Text('Aucune prise prévue aujourd’hui.'),
-              )
-            else
-              for (final intake in _intakes) _intakeRow(intake),
+            else ...[
+              if (_overdue.isNotEmpty) ...[
+                _sectionTitle('En attente de réponse (${_overdue.length})',
+                    const Color(0xFFB3261E)),
+                for (final intake in _overdue) _intakeRow(intake, showDate: true),
+                const SizedBox(height: 6),
+              ],
+              _sectionTitle('Aujourd’hui', const Color(0xFF17464D)),
+              if (_intakes.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.only(bottom: 10),
+                  child: Text('Aucune prise prévue aujourd’hui.',
+                      style: TextStyle(color: Color(0xFF557278))),
+                )
+              else
+                for (final intake in _intakes) _intakeRow(intake),
+            ],
           ],
         ),
       ),
     );
   }
 
-  Widget _intakeRow(MedicationReminder intake) {
+  Widget _sectionTitle(String text, Color color) => Padding(
+        padding: const EdgeInsets.only(top: 4, bottom: 6),
+        child: Text(text,
+            style: TextStyle(fontWeight: FontWeight.w700, color: color)),
+      );
+
+  static const _days = ['lun.', 'mar.', 'mer.', 'jeu.', 'ven.', 'sam.', 'dim.'];
+
+  Widget _intakeRow(MedicationReminder intake, {bool showDate = false}) {
     final busy = _busy.contains(intake.id);
     final taken = intake.status == 'taken';
     final missed = intake.status == 'missed';
@@ -165,7 +202,9 @@ class _TodayIntakesCardState extends ConsumerState<TodayIntakesCard> {
             ? 'Non pris'
             : intake.status == 'skipped'
                 ? 'Ignorée'
-                : 'À prendre à ${_hour(intake)}';
+                : showDate
+                    ? 'Prévu le ${_days[intake.date.weekday - 1]} ${intake.date.day.toString().padLeft(2, '0')}/${intake.date.month.toString().padLeft(2, '0')} à ${_hour(intake)}'
+                    : 'À prendre à ${_hour(intake)}';
     return Container(
       margin: const EdgeInsets.only(bottom: 6),
       decoration: BoxDecoration(

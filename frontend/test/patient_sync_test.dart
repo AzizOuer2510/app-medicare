@@ -26,6 +26,11 @@ const _today = '''
 "status":"PENDING","taken":false}]
 ''';
 
+const _overdue = '''
+[{"id":29,"medicationId":6,"medicationName":"Amoxicilline","date":"2026-11-18","time":"08:00:00",
+"status":"PENDING","taken":false}]
+''';
+
 const _documents = '''
 [{"id":1,"title":"Ordonnance du 19/11/2026 – Dr Ahmed","category":"PRESCRIPTION",
 "description":"Ordonnance envoyée par Dr Ahmed","filename":"ordonnance.pdf","contentType":"application/pdf",
@@ -47,6 +52,8 @@ void main() {
         '/medications': _medications,
         '/medications/today': _today,
         '/medications/reminders/31/taken': '{"id":31,"status":"TAKEN"}',
+        '/medications/intakes': _overdue,
+        '/medications/reminders/29/missed': '{"id":29,"status":"MISSED"}',
         '/documents': _documents,
         '/documents/overview': _overview,
       });
@@ -66,11 +73,21 @@ void main() {
     expect(find.text('Impossible de charger les médicaments.'), findsNothing);
 
     // Le patient coche sa prise de 08:00 : elle est envoyée au serveur.
-    expect(find.text('Mes prises d’aujourd’hui'), findsOneWidget);
-    expect(find.text('À prendre à 08:00'), findsOneWidget);
-    await tester.ensureVisible(find.byType(Checkbox).first);
+    expect(find.text('Mes prises'), findsOneWidget);
+    // Une prise passée restée sans réponse peut encore être indiquée « Non pris ».
+    expect(find.text('En attente de réponse (1)'), findsOneWidget);
+    expect(find.text('Prévu le mer. 18/11 à 08:00'), findsOneWidget);
+    await tester.ensureVisible(find.text('Non pris').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.byType(Checkbox).first);
+    await tester.tap(find.text('Non pris').first);
+    await tester.pumpAndSettle();
+    expect(find.text('Amoxicilline (08:00) : prise non faite enregistrée.'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 5));
+    await tester.pumpAndSettle();
+    expect(find.text('À prendre à 08:00'), findsOneWidget);
+    await tester.ensureVisible(find.byType(Checkbox).last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(Checkbox).last);
     await tester.pumpAndSettle();
     expect(find.text('Amoxicilline (08:00) : prise enregistrée.'), findsOneWidget);
 
