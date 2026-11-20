@@ -33,14 +33,28 @@ public class DocumentStorageService {
         if (file.getSize() > maxFileSize) {
             throw new ApiException(HttpStatus.PAYLOAD_TOO_LARGE, "Document exceeds the maximum file size");
         }
-        String filename = cleanFilename(file.getOriginalFilename());
+        try {
+            return store(file.getOriginalFilename(), file.getBytes());
+        } catch (IOException ex) {
+            throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, "Document could not be stored");
+        }
+    }
+
+    /** Enregistre un fichier déjà en mémoire (ex. ordonnance recopiée du module Médicaments). */
+    public StoredFile store(String originalFilename, byte[] bytes) {
+        if (bytes == null || bytes.length == 0) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "A non-empty file is required");
+        }
+        if (bytes.length > maxFileSize) {
+            throw new ApiException(HttpStatus.PAYLOAD_TOO_LARGE, "Document exceeds the maximum file size");
+        }
+        String filename = cleanFilename(originalFilename);
         int dot = filename.lastIndexOf('.');
         String extension = dot < 0 ? "" : filename.substring(dot + 1).toLowerCase(Locale.ROOT);
         if (!Arrays.asList("pdf", "png", "jpg", "jpeg").contains(extension)) {
             throw new ApiException(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "Only PDF, PNG and JPEG documents are accepted");
         }
         try {
-            byte[] bytes = file.getBytes();
             String contentType = detectContentType(bytes);
             boolean matches = switch (extension) {
                 case "pdf" -> "application/pdf".equals(contentType);

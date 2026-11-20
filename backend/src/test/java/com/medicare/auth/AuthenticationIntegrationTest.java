@@ -68,6 +68,13 @@ class AuthenticationIntegrationTest {
     @Autowired PrescriptionRepository prescriptions;
     @Autowired DoctorPatientAssignmentRepository assignments;
     @Autowired HealthRecordRepository health;
+    // Les ordonnances sont recopiées dans les documents du patient (avec une notification) :
+    // ces lignes référencent les utilisateurs et doivent être supprimées avant eux.
+    @Autowired com.medicare.document.repository.DocumentAnalysisRepository documentAnalyses;
+    @Autowired com.medicare.document.repository.DocumentRepository documents;
+    @Autowired com.medicare.document.repository.DocumentShareAccessRepository shareAccesses;
+    @Autowired com.medicare.document.repository.DocumentShareRepository shares;
+    @Autowired com.medicare.notification.repository.NotificationRepository notifications;
     @Autowired PlatformTransactionManager transactionManager;
     @MockitoBean PasswordResetMailService mail;
     @MockitoBean CompromisedPasswordChecker checker;
@@ -75,6 +82,8 @@ class AuthenticationIntegrationTest {
     record Account(User user, String token, List<String> codes) {}
 
     @BeforeEach void clean() {
+        shareAccesses.deleteAll(); shares.deleteAll();
+        documentAnalyses.deleteAll(); documents.deleteAll(); notifications.deleteAll();
         appointments.deleteAll(); medicationStockEntries.deleteAll(); medicationReminders.deleteAll();
         medications.deleteAll(); prescriptions.deleteAll(); assignments.deleteAll(); health.deleteAll();
         challenges.deleteAll(); recovery.deleteAll(); history.deleteAll(); roles.deleteAll(); merges.deleteAll(); audit.deleteAll();
@@ -465,6 +474,51 @@ class AuthenticationIntegrationTest {
                 .andExpect(status().isForbidden());
     }
 
+    @Test void doctorAddsPlanningForAFollowedPatientWhoSeesItAndDoctorTracksAdherence() throws Exception {
+        Account doctor = account("planning-doctor@example.fr", Role.DOCTOR, false);
+        Account patient = account("planning-patient@example.fr", Role.USER, false);
+        Map<String, Object> planning = new java.util.HashMap<>(Map.of(
+                "name", "Amoxicilline", "dosage", "500 mg", "frequencyPerDay", 2,
+                "startDate", java.time.LocalDate.now().toString(),
+                "reminderTimes", List.of("00:00:00", "23:59:00"), "status", "ACTIVE", "remindersEnabled", true,
+                "patientId", patient.user().getId()));
+        // Patient non suivi : refusé.
+        postJson("/api/medications", doctor.token(), planning, 404);
+        assignments.save(DoctorPatientAssignment.builder().doctor(doctor.user()).patient(patient.user()).active(true).build());
+        // Patient suivi : le planning est créé pour lui, sans ordonnance à déposer.
+        JsonNode created = postJson("/api/medications", doctor.token(), planning, 200);
+        assertThat(created.get("patientId").asLong()).isEqualTo(patient.user().getId());
+        assertThat(created.get("prescriptionId").isNull()).as("planning rattaché à une ordonnance du médecin").isFalse();
+        // Le médecin retrouve le médicament dans le traitement du patient.
+        mvc.perform(get("/api/medications").param("patientId", patient.user().getId().toString())
+                        .header("Authorization", "Bearer " + doctor.token()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$[0].name").value("Amoxicilline"));
+        // Le patient le voit dans sa liste de médicaments.
+        mvc.perform(get("/api/medications").header("Authorization", "Bearer " + patient.token()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$[0].name").value("Amoxicilline"));
+        mvc.perform(get("/api/medications/today").header("Authorization", "Bearer " + patient.token()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$[0].medicationName").value("Amoxicilline"));
+        assertThat(notifications.findAll()).anyMatch(n -> "Nouveau traitement".equals(n.getTitle())
+                && n.getUser().getId().equals(patient.user().getId()));
+        // Un second médicament réutilise la même ordonnance « Planning de traitement ».
+        planning.put("name", "Paracétamol");
+        JsonNode second = postJson("/api/medications", doctor.token(), planning, 200);
+        assertThat(second.get("prescriptionId").asLong()).isEqualTo(created.get("prescriptionId").asLong());
+        // Le patient confirme la prise de minuit ; le médecin voit l'observance du patient.
+        long dose = json.readTree(mvc.perform(get("/api/medications/today")
+                        .header("Authorization", "Bearer " + patient.token()))
+                .andReturn().getResponse().getContentAsString()).get(0).get("id").asLong();
+        postJson("/api/medications/reminders/" + dose + "/taken", patient.token(), Map.of(), 200);
+        mvc.perform(get("/api/medications/adherence/patients").header("Authorization", "Bearer " + doctor.token()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].patientId").value(patient.user().getId()))
+                .andExpect(jsonPath("$[0].activeMedications").value(2))
+                .andExpect(jsonPath("$[0].taken").value(1));
+        mvc.perform(get("/api/medications/adherence/patients").header("Authorization", "Bearer " + patient.token()))
+                .andExpect(status().isForbidden());
+    }
+
     @Test void doctorCanUploadAndPatientCanReadAnAttachedPrescription() throws Exception {
         Account doctor = account("doctor@example.fr", Role.DOCTOR, false);
         Account patient = account("patient@example.fr", Role.USER, false);
@@ -489,6 +543,20 @@ class AuthenticationIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(content().contentType(MediaType.APPLICATION_PDF))
                 .andExpect(content().bytes(pdf));
+
+        // Synchronisation : l'ordonnance arrive dans Documents → Ordonnances du patient, avec une
+        // notification, et le médecin la retrouve dans le dossier du patient.
+        mvc.perform(get("/api/documents").param("category", "PRESCRIPTION")
+                        .header("Authorization", "Bearer " + patient.token()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].sharedDoctorId").value(doctor.user().getId()));
+        mvc.perform(get("/api/documents").param("patientId", patient.user().getId().toString())
+                        .header("Authorization", "Bearer " + doctor.token()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1));
+        assertThat(notifications.findAll()).anyMatch(n -> "Nouvelle ordonnance".equals(n.getTitle())
+                && n.getUser().getId().equals(patient.user().getId()));
 
         Account unrelatedPatient = account("unrelated@example.fr", Role.USER, false);
         mvc.perform(get("/api/prescriptions/" + prescriptionId + "/document")
@@ -666,8 +734,12 @@ class AuthenticationIntegrationTest {
         JsonNode reminders = json.readTree(schedule);
         assertThat(reminders).hasSize(2);
         long reminderId = reminders.get(0).get("id").asLong();
+        // Le patient confirme lui-même ses prises (synchronisation : le médecin les voit).
+        Account intruder = account("intruder@example.fr", Role.USER, false);
         postJson("/api/medications/reminders/" + reminderId + "/taken",
-                patient.token(), Map.of(), 403);
+                intruder.token(), Map.of(), 404);
+        postJson("/api/medications/reminders/" + reminderId + "/taken",
+                patient.token(), Map.of(), 200);
         postJson("/api/medications/reminders/" + reminderId + "/taken",
                 doctor.token(), Map.of(), 200);
         mvc.perform(get("/api/medications/" + medicationId + "/history")
@@ -716,7 +788,7 @@ class AuthenticationIntegrationTest {
                         .header("Authorization", "Bearer " + patient.token())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(json.writeValueAsString(Map.of("minutes", 15))))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isOk());
         mvc.perform(post("/api/medications/reminders/" + reminderId + "/snooze")
                         .header("Authorization", "Bearer " + doctor.token())
                         .contentType(MediaType.APPLICATION_JSON)
@@ -752,7 +824,7 @@ class AuthenticationIntegrationTest {
                         .header("Authorization", "Bearer " + patient.token()))
                 .andExpect(status().isOk()).andExpect(jsonPath("$").isEmpty());
 
-        postJson("/api/medications/reminders/" + reminderId + "/taken", patient.token(), Map.of(), 403);
+        postJson("/api/medications/reminders/" + reminderId + "/taken", patient.token(), Map.of(), 200);
         postJson("/api/medications/reminders/" + reminderId + "/taken", doctor.token(), Map.of(), 200);
         postJson("/api/medications/reminders/" + reminderId + "/taken", doctor.token(), Map.of(), 200);
         mvc.perform(get("/api/medications/" + medicationId + "/stock")
@@ -761,7 +833,7 @@ class AuthenticationIntegrationTest {
                 .andExpect(jsonPath("$.lowStock").value(true));
         mvc.perform(post("/api/medications/reminders/" + reminderId + "/pending")
                         .header("Authorization", "Bearer " + patient.token()))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isOk());
         mvc.perform(post("/api/medications/reminders/" + reminderId + "/pending")
                         .header("Authorization", "Bearer " + doctor.token()))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("PENDING"));
@@ -809,11 +881,11 @@ class AuthenticationIntegrationTest {
         mvc.perform(patch("/api/medications/reminders/" + reminderId)
                         .header("Authorization", "Bearer " + other.token()).contentType(MediaType.APPLICATION_JSON)
                         .content(json.writeValueAsString(Map.of("status", "SKIPPED"))))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isNotFound()); // la prise d'un autre patient reste invisible
         mvc.perform(patch("/api/medications/reminders/" + reminderId)
                         .header("Authorization", "Bearer " + patient.token()).contentType(MediaType.APPLICATION_JSON)
                         .content(json.writeValueAsString(Map.of("status", "PENDING"))))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isOk()); // le patient corrige sa propre prise
         mvc.perform(patch("/api/medications/reminders/" + reminderId)
                         .header("Authorization", "Bearer " + doctor.token()).contentType(MediaType.APPLICATION_JSON)
                         .content(json.writeValueAsString(Map.of("status", "PENDING"))))
@@ -882,7 +954,7 @@ class AuthenticationIntegrationTest {
                 .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
         mvc.perform(post("/api/medications/reminders/" + emptySchedule.get(0).get("id").asLong() + "/taken")
                         .header("Authorization", "Bearer " + patient.token()))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isConflict());
         mvc.perform(post("/api/medications/reminders/" + emptySchedule.get(0).get("id").asLong() + "/taken")
                         .header("Authorization", "Bearer " + doctor.token()))
                 .andExpect(status().isConflict());

@@ -26,6 +26,10 @@ public interface PrescriptionRepository extends JpaRepository<Prescription, Long
 
     Optional<Prescription> findByIdAndDoctorId(Long id, Long doctorId);
 
+    /** Ordonnances avec fichier pas encore recopiées dans les documents du patient (identifiants seulement). */
+    @Query("select p.id from Prescription p where p.documentId is null and p.archived = false and p.documentData is not null")
+    List<Long> findIdsToCopyIntoDocuments();
+
     @Modifying
     @Query("update Prescription p set p.patient = :target where p.patient.id = :source")
     int transferPatient(@Param("source") Long source, @Param("target") User target);

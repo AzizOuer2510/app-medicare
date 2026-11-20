@@ -16,7 +16,10 @@ import 'document_shares_page.dart';
 import 'document_analysis_page.dart';
 
 class DocumentsPage extends ConsumerStatefulWidget {
-  const DocumentsPage({super.key});
+  const DocumentsPage({super.key, this.initialCategory});
+
+  /// Catégorie affichée à l'ouverture (ex. 'PRESCRIPTION' depuis « Mes ordonnances »).
+  final String? initialCategory;
   @override
   ConsumerState<DocumentsPage> createState() => _DocumentsPageState();
 }
@@ -43,6 +46,7 @@ class _DocumentsPageState extends ConsumerState<DocumentsPage> {
   @override
   void initState() {
     super.initState();
+    _category = widget.initialCategory;
     _load();
   }
 

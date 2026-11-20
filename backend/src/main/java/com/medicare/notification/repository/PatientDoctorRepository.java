@@ -6,4 +6,5 @@ public interface PatientDoctorRepository extends JpaRepository<PatientDoctor, Pa
     boolean existsByPatientIdAndDoctorId(Long patientId, Long doctorId);
     java.util.List<PatientDoctor> findByPatientIdOrderByDoctorFullNameAscDoctorIdAsc(Long patientId);
     boolean existsByPatientId(Long patientId);
+    java.util.List<PatientDoctor> findByDoctorId(Long doctorId);
 }

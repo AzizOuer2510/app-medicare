@@ -109,7 +109,7 @@ class HomePage extends ConsumerWidget {
                       badgeColor: const Color(0xFF65D3CA),
                       title: 'Médicaments',
                       description:
-                          'Traitements, rappels de prise, stock et ordonnances.',
+                          'Traitements, rappels de prise et stock. Vos ordonnances sont dans Documents.',
                       page: const MedicationsPage(),
                     ),
                     _ModuleCard(

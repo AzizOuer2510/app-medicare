@@ -5,7 +5,7 @@ import 'package:medicare/features/medications/medication.dart';
 import 'package:medicare/features/medications/prescription_upload_page.dart';
 
 void main() {
-  testWidgets('a new ordonnance must be analyzed before it can be sent',
+  testWidgets('a new ordonnance needs a patient and a file before it can be sent',
       (tester) async {
     await tester.pumpWidget(
       const ProviderScope(
@@ -17,15 +17,18 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Avant l’envoi au patient'), findsOneWidget);
+    await tester.scrollUntilVisible(
+        find.text('Choisissez le patient et le fichier'), 200,
+        scrollable: find.byType(Scrollable).first);
     final sendButton = find.ancestor(
-      of: find.text('Analyser et vérifier avant l’envoi'),
+      of: find.text('Choisissez le patient et le fichier'),
       matching: find.byType(FilledButton),
     );
     expect(sendButton, findsOneWidget);
     expect(tester.widget<FilledButton>(sendButton).onPressed, isNull);
   });
 
-  testWidgets('existing ordonnance exposes the local OCR planning action',
+  testWidgets('existing ordonnance exposes the patient planning prefill action',
       (tester) async {
     final prescription = Prescription(
       id: 12,
@@ -48,7 +51,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Préremplir les champs avec l’OCR local'), findsOneWidget);
+    expect(find.text('Préremplir le planning de votre patient'), findsOneWidget);
     expect(find.text('Patient : Alice Martin'), findsOneWidget);
     expect(find.text('Nom complet du patient'), findsNothing);
     expect(find.text('Choisir un fichier'), findsNothing);

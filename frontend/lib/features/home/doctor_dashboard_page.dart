@@ -6,8 +6,8 @@ import '../auth/auth_user.dart';
 import '../auth/authentication_state.dart';
 import '../health/doctor_health_patients_page.dart';
 import 'followed_patients_page.dart';
-import '../medications/medication.dart';
-import '../medications/prescriptions_page.dart';
+import '../medications/medication_form_page.dart';
+import '../medications/patients_adherence_page.dart';
 import '../medications/prescription_upload_page.dart';
 import '../notifications/pages/notifications_page.dart';
 import '../notifications/widgets/notification_badge.dart';
@@ -24,7 +24,6 @@ class DoctorDashboardPage extends ConsumerStatefulWidget {
 }
 
 class _DoctorDashboardPageState extends ConsumerState<DoctorDashboardPage> {
-  List<Prescription> _prescriptions = const [];
   List<FollowedPatient> _patients = const [];
   bool _loading = true;
   String? _error;
@@ -41,18 +40,14 @@ class _DoctorDashboardPageState extends ConsumerState<DoctorDashboardPage> {
       _error = null;
     });
     try {
-      final responses = await Future.wait([
-        ref.read(apiClientProvider).dio.get('/prescriptions'),
-        ref.read(apiClientProvider).dio.get('/prescriptions/patients/followed'),
-      ]);
+      // Même liste de patients suivis que dans tous les modules.
+      final response =
+          await ref.read(apiClientProvider).dio.get('/health/patients');
       if (!mounted) return;
       setState(() {
-        _prescriptions = (responses[0].data as List<dynamic>)
-            .map((item) => Prescription.fromJson(item as Map<String, dynamic>))
-            .toList();
-        _patients = (responses[1].data as List<dynamic>)
-            .map((item) =>
-                FollowedPatient.fromJson(item as Map<String, dynamic>))
+        _patients = (response.data as List<dynamic>)
+            .map((item) => FollowedPatient.fromJson(
+                Map<String, dynamic>.from(item as Map)))
             .toList();
         _loading = false;
       });
@@ -73,12 +68,25 @@ class _DoctorDashboardPageState extends ConsumerState<DoctorDashboardPage> {
     if (uploaded == true && mounted) await _loadDashboardData();
   }
 
-  Future<void> _browsePrescriptions() async {
-    await Navigator.push(
+  /// Ajoute un médicament et ses horaires au planning d'un patient choisi (sans ordonnance à déposer).
+  Future<void> _addToPatientPlanning() async {
+    final patient = await pickFollowedPatient(context, ref,
+        title: 'Planning de quel patient ?');
+    if (patient == null || !mounted) return;
+    final added = await Navigator.push<bool>(
       context,
-      MaterialPageRoute(builder: (_) => const PrescriptionsPage()),
+      MaterialPageRoute(
+        builder: (_) => MedicationFormPage(
+          patientId: patient['id'] as int,
+          patientName: patient['name'] as String,
+        ),
+      ),
     );
-    if (mounted) await _loadDashboardData();
+    if (added == true && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Ajouté au planning de ${patient['name']} : il est prévenu par une notification.')));
+      await _loadDashboardData();
+    }
   }
 
   Future<void> _browseFollowedPatients() async {
@@ -159,9 +167,9 @@ class _DoctorDashboardPageState extends ConsumerState<DoctorDashboardPage> {
                   leading: const CircleAvatar(
                     child: Icon(Icons.upload_file_outlined),
                   ),
-                  title: const Text('Déposer une ordonnance'),
+                  title: const Text('Envoyer une ordonnance et préparer le planning'),
                   subtitle: const Text(
-                    'Choisissez un patient par son nom complet et ajoutez son ordonnance.',
+                    'L’ordonnance arrive dans les documents du patient ; les médicaments peuvent être extraits pour créer son planning de prises.',
                   ),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: _uploadPrescription,
@@ -171,14 +179,31 @@ class _DoctorDashboardPageState extends ConsumerState<DoctorDashboardPage> {
               Card(
                 child: ListTile(
                   leading: const CircleAvatar(
-                    child: Icon(Icons.document_scanner_outlined),
+                    child: Icon(Icons.add_alarm_outlined),
                   ),
-                  title: const Text('Préremplir un planning existant'),
+                  title: const Text('Ajouter un médicament au planning d’un patient'),
                   subtitle: const Text(
-                    'Analysez une ordonnance déjà déposée pour proposer les médicaments.',
+                    'Choisissez le patient, le médicament et ses horaires : ils arrivent dans son planning de prises.',
                   ),
                   trailing: const Icon(Icons.chevron_right),
-                  onTap: _browsePrescriptions,
+                  onTap: _addToPatientPlanning,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Card(
+                child: ListTile(
+                  leading: const CircleAvatar(
+                    child: Icon(Icons.fact_check_outlined),
+                  ),
+                  title: const Text('Observance des traitements'),
+                  subtitle: const Text(
+                    'Prises effectuées et oubliées de chaque patient, avec son taux d’observance.',
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const PatientsAdherencePage()),
+                  ),
                 ),
               ),
               const SizedBox(height: 8),
@@ -213,10 +238,12 @@ class _DoctorDashboardPageState extends ConsumerState<DoctorDashboardPage> {
                   const SizedBox(width: 12),
                   Expanded(
                     child: _StatisticCard(
-                      label: 'Prescriptions',
-                      value: _loading ? '—' : '${_prescriptions.length}',
-                      icon: Icons.description_outlined,
-                      onTap: _browsePrescriptions,
+                      label: 'Patients en alerte',
+                      value: _loading
+                          ? '—'
+                          : '${_patients.where((p) => ((p.summary?['alertCount'] as num?) ?? 0) > 0).length}',
+                      icon: Icons.warning_amber_rounded,
+                      onTap: _browseFollowedPatients,
                     ),
                   ),
                 ],
@@ -235,7 +262,7 @@ class _DoctorDashboardPageState extends ConsumerState<DoctorDashboardPage> {
                 child: ListTile(
                   leading: const Icon(Icons.folder_shared_outlined),
                   title: const Text('Documents médicaux'),
-                  subtitle: const Text('Déposez et consultez les documents partagés de vos patients.'),
+                  subtitle: const Text('Tous les documents et ordonnances de vos patients, synchronisés avec leur application.'),
                   onTap: () => Navigator.push(context, MaterialPageRoute(
                     builder: (_) => const DocumentsPage(),
                   )),

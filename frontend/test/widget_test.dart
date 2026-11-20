@@ -379,31 +379,13 @@ void main() {
       );
     final api = ApiClient(storage)
       ..dio.httpClientAdapter = StaticResponseAdapter('[]', responses: {
-        '/prescriptions': '''
-          [{
-            "id": 12,
-            "patientId": 7,
-            "patientName": "Patient Exemple",
-            "doctorId": 2,
-            "doctorName": "Dr Alice Martin",
-            "diagnosis": "Suivi",
-            "prescriptionDate": "2026-11-15",
-            "medicationIds": [],
-            "hasDocument": false
-          }, {
-            "id": 13,
-            "patientId": 8,
-            "patientName": "Autre Patient",
-            "doctorId": 2,
-            "doctorName": "Dr Alice Martin",
-            "diagnosis": "Autre suivi",
-            "prescriptionDate": "2026-11-14",
-            "medicationIds": [],
-            "hasDocument": false
-          }]
-        ''',
-        '/prescriptions/patients/followed':
-            '[{"id":7,"fullName":"Patient Exemple"}]',
+        '/health/patients':
+            '[{"id":7,"fullName":"Patient Exemple","sources":["CARE_LINK"],"alertCount":0,"alerts":[]}]',
+        '/medications':
+            '[{"id":3,"name":"Doliprane","dosage":"1 g","status":"ACTIVE","reminderTimes":["08:00:00"],"prescriptionId":null}]',
+        '/medications/intakes':
+            '[{"id":31,"medicationId":3,"medicationName":"Doliprane","date":"2026-11-18","time":"08:00:00","status":"TAKEN","takenAt":"2026-11-18T08:05:00"},'
+            '{"id":30,"medicationId":3,"medicationName":"Doliprane","date":"2026-11-17","time":"08:00:00","status":"MISSED"}]',
         '/medications/statistics':
             '{"period":"WEEKLY","eligibleDoses":2,"taken":1,"missed":1,"adherencePercent":50,"days":[]}',
         '/medications/today': '[]',
@@ -437,6 +419,10 @@ void main() {
       ),
       findsOneWidget,
     );
+    expect(find.text('Ajouter un médicament au planning d’un patient'), findsOneWidget);
+    expect(find.text('Observance des traitements'), findsOneWidget);
+    await tester.scrollUntilVisible(find.text('Patients suivis'), 200,
+        scrollable: find.byType(Scrollable).first);
     expect(find.text('Patients suivis'), findsOneWidget);
     expect(find.text('Prescriptions récentes'), findsNothing);
     expect(find.text('Medicaments'), findsNothing);
@@ -447,26 +433,25 @@ void main() {
     expect(find.text('Patient Exemple'), findsOneWidget);
     await tester.tap(find.text('Patient Exemple'));
     await tester.pumpAndSettle();
-    expect(find.text('Prescriptions de Patient Exemple'), findsOneWidget);
-    expect(
-      find.text('Consulter l’observance du traitement'),
-      findsOneWidget,
-    );
-    await tester.tap(find.text('Consulter l’observance du traitement'));
+    // Dossier patient synchronisé : santé, médicaments pris / oubliés, documents.
+    expect(find.text('Santé'), findsOneWidget);
+    expect(find.text('Médicaments'), findsOneWidget);
+    expect(find.text('Documents'), findsOneWidget);
+    await tester.tap(find.text('Médicaments'));
     await tester.pumpAndSettle();
-    expect(find.text('Observance · Patient Exemple'), findsOneWidget);
-    Navigator.of(
-      tester.element(find.text('Observance · Patient Exemple')),
-    ).pop();
-    await tester.pumpAndSettle();
-    expect(find.textContaining('Suivi'), findsOneWidget);
-    expect(find.textContaining('Autre suivi'), findsNothing);
-
-    Navigator.of(
-      tester.element(find.text('Prescriptions de Patient Exemple')),
-    ).pop();
-    await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Observance du traitement'));
+    expect(find.textContaining('Doliprane'), findsWidgets);
+    expect(find.text('Pris'), findsWidgets);
+    final medicationList = find
+        .descendant(
+            of: find.byKey(const Key('patient-medications-list')),
+            matching: find.byType(Scrollable))
+        .first;
+    await tester.scrollUntilVisible(find.text('Oublié'), 200,
+        scrollable: medicationList);
+    expect(find.text('Oublié'), findsOneWidget);
+    await tester.scrollUntilVisible(find.text('Statistiques'), -200,
+        scrollable: medicationList);
+    await tester.tap(find.text('Statistiques'));
     await tester.pumpAndSettle();
     expect(find.text('Observance · Patient Exemple'), findsOneWidget);
     expect(find.text('50 %'), findsOneWidget);
@@ -474,22 +459,18 @@ void main() {
       tester.element(find.text('Observance · Patient Exemple')),
     ).pop();
     await tester.pumpAndSettle();
+    Navigator.of(tester.element(find.text('Patient Exemple').first)).pop();
+    await tester.pumpAndSettle();
     Navigator.of(tester.element(find.text('Patients suivis').last)).pop();
     await tester.pumpAndSettle();
 
-    await tester.ensureVisible(find.text('Prescriptions'));
-    await tester.tap(find.text('Prescriptions'));
+    // L'ancien écran « Prescriptions » n'existe plus : les ordonnances sont dans Documents.
+    expect(find.text('Prescriptions'), findsNothing);
+    await tester.scrollUntilVisible(
+        find.text('Envoyer une ordonnance et préparer le planning'), -200,
+        scrollable: find.byType(Scrollable).first);
     await tester.pumpAndSettle();
-    expect(find.text('Prescriptions des patients'), findsOneWidget);
-    expect(find.text('Autre Patient'), findsOneWidget);
-    Navigator.of(tester.element(find.text('Prescriptions des patients'))).pop();
-    await tester.pumpAndSettle();
-
-    await Scrollable.ensureVisible(
-      tester.element(find.text('Déposer une ordonnance')), alignment: 0.5,
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Déposer une ordonnance'));
+    await tester.tap(find.text('Envoyer une ordonnance et préparer le planning'));
     await tester.pumpAndSettle();
     expect(find.byType(PrescriptionUploadPage), findsOneWidget);
     expect(find.text('Nom complet du patient'), findsOneWidget);

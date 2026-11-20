@@ -3,11 +3,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import '../../core/providers.dart';
+import '../home/patient_file_page.dart';
 import 'health_api.dart';
 import 'health_page.dart';
 import 'health_theme.dart';
 
-/// Espace médecin : patients suivis (via Médicaments ou Rendez-vous) avec
+/// Espace médecin : patients suivis (traitement, rendez-vous ou « Mes médecins ») avec
 /// leurs dernières constantes et les alertes, puis accès à leur suivi complet.
 class DoctorHealthPatientsPage extends ConsumerStatefulWidget {
   const DoctorHealthPatientsPage({super.key});
@@ -64,6 +65,21 @@ class _DoctorHealthPatientsPageState
             id: (patient['id'] as num).toInt(),
             name: patient['fullName']?.toString() ?? '',
           ),
+        ),
+      ),
+    ).then((_) => _load());
+  }
+
+  /// Dossier patient : observance et médicaments (onglet 1) ou documents (onglet 2).
+  void _openFile(Map<String, dynamic> patient, int tab) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PatientFilePage(
+          patientId: (patient['id'] as num).toInt(),
+          patientName: patient['fullName']?.toString() ?? '',
+          summary: patient,
+          initialTab: tab,
         ),
       ),
     ).then((_) => _load());
@@ -154,7 +170,11 @@ class _DoctorHealthPatientsPageState
                       )
                     else
                       for (final patient in items)
-                        _PatientCard(patient: patient, onTap: () => _open(patient)),
+                        _PatientCard(
+                            patient: patient,
+                            onTap: () => _open(patient),
+                            onAdherence: () => _openFile(patient, 1),
+                            onDocuments: () => _openFile(patient, 2)),
                   ],
                 ),
               ),
@@ -167,10 +187,15 @@ class _DoctorHealthPatientsPageState
 }
 
 class _PatientCard extends StatelessWidget {
-  const _PatientCard({required this.patient, required this.onTap});
+  const _PatientCard({
+    required this.patient,
+    required this.onTap,
+    required this.onAdherence,
+    required this.onDocuments,
+  });
 
   final Map<String, dynamic> patient;
-  final VoidCallback onTap;
+  final VoidCallback onTap, onAdherence, onDocuments;
 
   @override
   Widget build(BuildContext context) {
@@ -236,14 +261,36 @@ class _PatientCard extends StatelessWidget {
             children: [
               for (final source in sources)
                 _chip(
-                  source == 'MEDICATIONS' ? 'Traitement prescrit' : 'Rendez-vous',
-                  source == 'MEDICATIONS'
-                      ? Icons.medication_outlined
-                      : Icons.calendar_month_outlined,
+                  switch (source) {
+                    'MEDICATIONS' => 'Traitement prescrit',
+                    'CARE_LINK' => 'Mes médecins',
+                    _ => 'Rendez-vous',
+                  },
+                  switch (source) {
+                    'MEDICATIONS' => Icons.medication_outlined,
+                    'CARE_LINK' => Icons.link,
+                    _ => Icons.calendar_month_outlined,
+                  },
                   HealthColors.brightTeal,
                 ),
               for (final alert in alerts)
                 _chip(alert, Icons.warning_amber_rounded, HealthColors.heart),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            children: [
+              OutlinedButton.icon(
+                onPressed: onAdherence,
+                icon: const Icon(Icons.medication_outlined, size: 18),
+                label: const Text('Observance et médicaments'),
+              ),
+              TextButton.icon(
+                onPressed: onDocuments,
+                icon: const Icon(Icons.folder_open_outlined, size: 18),
+                label: const Text('Documents'),
+              ),
             ],
           ),
         ],

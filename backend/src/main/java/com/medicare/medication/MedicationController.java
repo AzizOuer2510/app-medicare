@@ -23,6 +23,7 @@ import java.util.*;
 public class MedicationController {
     private static final BigDecimal ZERO = BigDecimal.ZERO;
     private static final int MAX_SCHEDULE_DAYS = 366;
+    private static final String PLANNING_DIAGNOSIS = "Planning de traitement";
 
     private final MedicationRepository repo;
     private final UserRepository users;
@@ -30,6 +31,8 @@ public class MedicationController {
     private final MedicationReminderRepository reminders;
     private final MedicationStockEntryRepository stockEntries;
     private final DoctorPatientAssignmentRepository assignments;
+    private final com.medicare.health.HealthAccessService healthAccess;
+    private final com.medicare.notification.service.CareRelationships care;
 
     public record MedicationRequest(
             @NotBlank @Size(max = 160) String name,
@@ -50,7 +53,9 @@ public class MedicationController {
             @DecimalMin("0") @Digits(integer = 9, fraction = 3) BigDecimal stockQuantity,
             @Size(max = 40) String stockUnit,
             @DecimalMin("0") @Digits(integer = 9, fraction = 3) BigDecimal lowStockThreshold,
-            @DecimalMin(value = "0.001") @Digits(integer = 9, fraction = 3) BigDecimal packageQuantity) {}
+            @DecimalMin(value = "0.001") @Digits(integer = 9, fraction = 3) BigDecimal packageQuantity,
+            /** Médecin sans ordonnance : patient suivi pour qui le planning est créé. */
+            Long patientId) {}
 
     public record MedicationResponse(
             Long id, String name, String dosage, String frequency, Integer frequencyPerDay,
@@ -58,7 +63,7 @@ public class MedicationController {
             Long prescriptionId, String pharmaceuticalForm, String notes, BigDecimal unitsPerDose,
             List<DayOfWeek> weekdays, MedicationStatus status, boolean remindersEnabled,
             boolean stockTracked, BigDecimal stockQuantity, String stockUnit, BigDecimal lowStockThreshold,
-            BigDecimal packageQuantity, boolean lowStock) {
+            BigDecimal packageQuantity, boolean lowStock, Long patientId, String patientName) {
         static MedicationResponse from(Medication m) {
             BigDecimal quantity = nvl(m.getStockQuantity());
             BigDecimal threshold = nvl(m.getLowStockThreshold());
@@ -70,7 +75,9 @@ public class MedicationController {
                     m.getStatus(), m.isRemindersEnabled(), tracked, quantity, m.getStockUnit(),
                     threshold, m.getPackageQuantity(),
                     tracked && threshold.signum() > 0
-                            && quantity.compareTo(threshold) <= 0);
+                            && quantity.compareTo(threshold) <= 0,
+                    m.getUser() == null ? null : m.getUser().getId(),
+                    m.getUser() == null ? null : m.getUser().getFullName());
         }
     }
 
@@ -115,9 +122,9 @@ public class MedicationController {
 
     @GetMapping
     @Transactional(readOnly = true)
-    public List<MedicationResponse> all(Authentication auth) {
+    public List<MedicationResponse> all(@RequestParam(required = false) Long patientId, Authentication auth) {
         User current = currentUser(auth);
-        return visibleMedications(current).stream().map(MedicationResponse::from).toList();
+        return visibleMedications(current, patientId).stream().map(MedicationResponse::from).toList();
     }
 
     @GetMapping("/{id}")
@@ -133,8 +140,13 @@ public class MedicationController {
         requireScheduleManager(user);
         validateRequest(request);
         Prescription prescription = findPrescription(request.prescriptionId(), user);
+        if (user.getRole() == Role.DOCTOR && prescription == null && request.patientId() != null) {
+            // Planning ajouté directement depuis le dossier du patient : rattaché à une ordonnance
+            // « Planning de traitement » du médecin, pour que le patient le reçoive dans son planning.
+            prescription = planningPrescription(user, request.patientId());
+        }
         if (user.getRole() == Role.DOCTOR && prescription == null) {
-            badRequest("A doctor must attach a medication to their prescription");
+            badRequest("Choisissez le patient pour qui ce planning est créé.");
         }
         if (user.getRole() == Role.DOCTOR
                 && (request.reminderTimes() == null || request.reminderTimes().isEmpty())) {
@@ -144,10 +156,22 @@ public class MedicationController {
         Medication medication = new Medication();
         medication.setUser(prescription == null ? user : prescription.getPatient());
         applyRequest(medication, request, user, true);
+        // applyRequest relit prescriptionId (absent pour un planning créé par patientId) :
+        // on rattache explicitement l'ordonnance retenue, sinon le médecin perd le médicament.
+        medication.setPrescription(prescription);
         Medication saved = repo.save(medication);
         if (nvl(saved.getStockQuantity()).signum() > 0) {
             saveStockEntry(saved, null, MedicationStockEntry.Type.INITIAL_STOCK,
                     saved.getStockQuantity(), "Initial stock");
+        }
+        if (user.getRole() == Role.DOCTOR) {
+            // Le patient est prévenu que son planning de prises a changé.
+            String times = saved.getReminderTimes().stream().sorted()
+                    .map(t -> t.toString().substring(0, 5)).reduce((a, b) -> a + ", " + b).orElse("");
+            care.notify(saved.getUser(), "Nouveau traitement",
+                    user.getFullName() + " a ajouté " + saved.getName()
+                            + (times.isEmpty() ? "" : " (" + times + ")")
+                            + " à votre planning de prises. Retrouvez-le dans Médicaments.");
         }
         return MedicationResponse.from(saved);
     }
@@ -206,7 +230,7 @@ public class MedicationController {
         List<Medication> medications = visibleMedications(user, patientId);
         for (Medication owned : medications) {
             if (owned.getStatus() != MedicationStatus.ACTIVE || !owned.isRemindersEnabled()) continue;
-            Medication medication = ownedMedicationForUpdate(owned.getId(), user);
+            Medication medication = visibleMedicationForUpdate(owned.getId(), user, patientId);
             generate(medication, today, today);
             result.addAll(reminders.findByMedicationIdAndDateOrderByTime(medication.getId(), today).stream()
                     .map(IntakeResponse::from).toList());
@@ -276,7 +300,7 @@ public class MedicationController {
     public IntakeResponse snooze(@PathVariable Long reminderId,
             @Valid @RequestBody SnoozeRequest request, Authentication auth) {
         User user = currentUser(auth);
-        requireScheduleManager(user);
+        requireIntakeRecorder(user);
         MedicationReminder visible = findReminder(reminderId, user, false);
         ownedMedicationForUpdate(visible.getMedication().getId(), user);
         MedicationReminder reminder = findReminder(reminderId, user, true);
@@ -345,6 +369,82 @@ public class MedicationController {
         return stockResponse(medication);
     }
 
+    /**
+     * Historique des prises (prises, oubliées, sautées…) de tous les médicaments, du plus récent au plus ancien.
+     * Avec patientId : réservé au médecin qui suit le patient (synchronisation médecin ↔ patient).
+     */
+    @GetMapping("/intakes")
+    @Transactional
+    public List<IntakeResponse> intakes(@RequestParam(required = false) Long patientId,
+            @RequestParam(required = false) LocalDate from,
+            @RequestParam(required = false) LocalDate to,
+            @RequestParam(required = false) IntakeStatus status,
+            Authentication auth) {
+        User user = currentUser(auth);
+        LocalDate end = to == null ? LocalDate.now() : to;
+        LocalDate start = from == null ? end.minusDays(29) : from;
+        validateRange(start, end);
+        LocalDateTime now = LocalDateTime.now();
+        List<IntakeResponse> result = new ArrayList<>();
+        for (Medication owned : visibleMedications(user, patientId)) {
+            Medication medication = visibleMedicationForUpdate(owned.getId(), user, patientId);
+            generate(medication, start, end);
+            reminders.findSchedule(medication.getId(), start, end).stream()
+                    .filter(r -> !LocalDateTime.of(r.getDate(), r.getTime()).isAfter(now))
+                    .filter(r -> status == null || r.getStatus() == status)
+                    .map(IntakeResponse::from)
+                    .forEach(result::add);
+        }
+        result.sort(Comparator.comparing(IntakeResponse::date).thenComparing(IntakeResponse::time).reversed());
+        return result;
+    }
+
+    public record PatientAdherence(Long patientId, String patientName, int activeMedications,
+                                   long eligibleDoses, long taken, long missed, long skipped, long pending,
+                                   Double adherencePercent, LocalDate lastMissed) {}
+
+    /**
+     * Observance de chaque patient suivi par le médecin sur les derniers jours (7 par défaut) :
+     * prises effectuées, oubliées, ignorées, non renseignées et taux d'observance.
+     */
+    @GetMapping("/adherence/patients")
+    @Transactional
+    public List<PatientAdherence> patientsAdherence(@RequestParam(defaultValue = "7") int days, Authentication auth) {
+        User doctor = currentUser(auth);
+        if (doctor.getRole() != Role.DOCTOR) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Réservé aux médecins.");
+        }
+        if (days < 1 || days > 90) badRequest("days must be between 1 and 90");
+        LocalDate to = LocalDate.now();
+        LocalDate from = to.minusDays(days - 1L);
+        LocalDateTime now = LocalDateTime.now();
+        List<PatientAdherence> result = new ArrayList<>();
+        for (User patient : healthAccess.followedPatients(doctor).keySet()) {
+            List<MedicationReminder> eligible = new ArrayList<>();
+            int active = 0;
+            for (Medication owned : repo.findByUserIdOrderByName(patient.getId())) {
+                if (owned.getStatus() != MedicationStatus.ACTIVE) continue;
+                active++;
+                Medication medication = visibleMedicationForUpdate(owned.getId(), doctor, patient.getId());
+                generate(medication, from, to);
+                if (!medication.isRemindersEnabled()) continue;
+                reminders.findSchedule(medication.getId(), from, to).stream()
+                        .filter(r -> !LocalDateTime.of(r.getDate(), r.getTime()).isAfter(now))
+                        .forEach(eligible::add);
+            }
+            long taken = count(eligible, IntakeStatus.TAKEN);
+            long missed = count(eligible, IntakeStatus.MISSED);
+            long skipped = count(eligible, IntakeStatus.SKIPPED);
+            long pending = eligible.size() - taken - missed - skipped;
+            LocalDate lastMissed = eligible.stream().filter(r -> r.getStatus() == IntakeStatus.MISSED)
+                    .map(MedicationReminder::getDate).max(Comparator.naturalOrder()).orElse(null);
+            Double percent = eligible.isEmpty() ? null : Math.round((taken * 1000.0) / eligible.size()) / 10.0;
+            result.add(new PatientAdherence(patient.getId(), patient.getFullName(), active, eligible.size(),
+                    taken, missed, skipped, pending, percent, lastMissed));
+        }
+        return result;
+    }
+
     @GetMapping({"/adherence", "/statistics"})
     @Transactional
     public AdherenceResponse adherence(@RequestParam(defaultValue = "DAILY") String period,
@@ -373,7 +473,7 @@ public class MedicationController {
         User user = currentUser(auth);
         List<Medication> medications = visibleMedications(user, patientId);
         for (Medication owned : medications) {
-            Medication medication = ownedMedicationForUpdate(owned.getId(), user);
+            Medication medication = visibleMedicationForUpdate(owned.getId(), user, patientId);
             generate(medication, from, to);
         }
 
@@ -459,7 +559,9 @@ public class MedicationController {
     }
 
     private IntakeResponse updateIntake(Long reminderId, IntakeStatus target, String note, User user) {
-        requireScheduleManager(user);
+        // Le patient confirme ses propres prises (findReminder le limite à ses médicaments) :
+        // le médecin qui le suit voit ainsi les prises effectuées et oubliées.
+        requireIntakeRecorder(user);
         MedicationReminder visibleReminder = findReminder(reminderId, user, false);
         Medication medication = ownedMedicationForUpdate(visibleReminder.getMedication().getId(), user);
         MedicationReminder reminder = findReminder(reminderId, user, true);
@@ -617,6 +719,26 @@ public class MedicationController {
                 () -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Reminder not found"));
     }
 
+    /** Ordonnance « Planning de traitement » du médecin pour ce patient (réutilisée, ou créée une fois). */
+    private Prescription planningPrescription(User doctor, Long patientId) {
+        requireFollowedPatient(doctor, patientId);
+        User patient = users.findById(patientId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Patient not found"));
+        return prescriptions.findByDoctorIdAndArchivedFalseOrderByPrescriptionDateDesc(doctor.getId()).stream()
+                .filter(p -> p.getPatient().getId().equals(patientId) && PLANNING_DIAGNOSIS.equals(p.getDiagnosis()))
+                .findFirst()
+                .orElseGet(() -> {
+                    Prescription created = prescriptions.save(Prescription.builder()
+                            .doctor(doctor).patient(patient).diagnosis(PLANNING_DIAGNOSIS)
+                            .prescriptionDate(LocalDate.now()).build());
+                    if (!assignments.existsByDoctorIdAndPatientId(doctor.getId(), patientId)) {
+                        assignments.save(DoctorPatientAssignment.builder()
+                                .doctor(doctor).patient(patient).active(true).build());
+                    }
+                    return created;
+                });
+    }
+
     private Prescription findPrescription(Long id, User user) {
         if (id == null) return null;
         if (user.getRole() == Role.ADMIN) {
@@ -641,11 +763,28 @@ public class MedicationController {
 
     private List<Medication> visibleMedications(User user, Long patientId) {
         if (patientId == null) return visibleMedications(user);
-        if (user.getRole() != Role.DOCTOR
-                || !assignments.existsByDoctorIdAndPatientIdAndActiveTrue(user.getId(), patientId)) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Patient not found");
-        }
-        return repo.findByPrescriptionDoctorIdAndUserIdOrderByName(user.getId(), patientId);
+        requireFollowedPatient(user, patientId);
+        // Le médecin qui suit le patient voit tout son traitement (pas seulement ses propres prescriptions).
+        return repo.findByUserIdOrderByName(patientId);
+    }
+
+    private void requireFollowedPatient(User user, Long patientId) {
+        boolean follows = user.getRole() == Role.DOCTOR && users.findById(patientId)
+                .map(patient -> healthAccess.follows(user, patient)).orElse(false);
+        if (!follows) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Patient not found");
+    }
+
+    /** Verrouille un médicament visible : celui de l'utilisateur, ou celui d'un patient suivi par le médecin. */
+    private Medication visibleMedicationForUpdate(Long id, User user, Long patientId) {
+        if (patientId == null) return ownedMedicationForUpdate(id, user);
+        requireFollowedPatient(user, patientId);
+        return repo.findByIdAndUserIdForUpdate(id, patientId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Medication not found"));
+    }
+
+    /** Médecin, administrateur, ou patient pour ses propres prises (pas pour modifier le traitement). */
+    private void requireIntakeRecorder(User user) {
+        if (user.getRole() != Role.USER) requireScheduleManager(user);
     }
 
     private void requireScheduleManager(User user) {

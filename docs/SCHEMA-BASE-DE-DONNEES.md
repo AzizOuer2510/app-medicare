@@ -1,8 +1,10 @@
-# MediCare : vision complète de l'application
+# MediCare : vision technique de l'application
 
-MediCare est une application mobile de suivi médical. Elle relie trois types d'utilisateurs, le patient, le médecin et l'administrateur, autour de cinq modules qui partagent un même compte, une même API et une même base PostgreSQL.
+MediCare est une application mobile de suivi médical. Elle relie le patient, le médecin, la secrétaire et l'administrateur autour de cinq modules qui partagent un même compte, une même API et une même base PostgreSQL.
 
-> Sources : code de `Dev_Mobile-main` (frontend Flutter `lib/`, backend Spring Boot `com.medicare.*`), base PostgreSQL `app_medicare` lue le 19/11/2026, `README.md` et `docs/M5-INTEGRATION.md`. Les flux d'exemple des modules 1, 2, 3 et 5 sont illustratifs ; celui du module 4 correspond à un test réel sur le téléphone. Les tables Médicaments et Documents étaient encore vides lors de l'analyse : leurs règles viennent du code.
+> Sources : code de `Dev_Mobile-main` (frontend Flutter `lib/`, backend Spring Boot `com.medicare.*`), base PostgreSQL `app_medicare` et tests automatisés (80 tests backend, 61 tests Flutter), état du 20/11/2026. Les exemples « de bout en bout » des modules M4 et M3/M5 (ordonnance, planning, observance) ont été vérifiés sur la vraie base ; les autres sont décrits à partir du code.
+
+Document de révision : architecture, les cinq modules présentés de la même façon, les notions du cours et le processus complet de compilation et de lancement. Le cahier des charges est dans un document séparé (`CAHIER-DES-CHARGES.html`).
 
 ## Sommaire
 
@@ -14,7 +16,7 @@ MediCare est une application mobile de suivi médical. Elle relie trois types d'
   - [M4 · Suivi santé et nutrition](#m4--suivi-santé-et-nutrition)
   - [M5 · Notifications et documents](#m5--notifications-et-documents)
 - [3. Notions du cours utilisées dans le projet](#3-notions-du-cours-utilisées-dans-le-projet)
-- [4. Lancer l'application](#4-lancer-lapplication)
+- [4. Compiler et lancer l'application](#4-compiler-et-lancer-lapplication)
 
 ---
 
@@ -24,49 +26,94 @@ MediCare est une application mobile de suivi médical. Elle relie trois types d'
 
 ```text
 Téléphone Android (CRT NX1)  ──Wi-Fi──►  API Spring Boot :8082  ──JPA──►  PostgreSQL app_medicare (29 tables)
-Flutter · Dio · jeton JWT                 Java 21 · Spring Security     │
-                                          │                            └─► fichiers des documents : backend/storage/documents
-                                          └─► Ollama (IA locale, facultatif) : llama3.2, llava
+ou navigateur (Flutter web)               Java 21 · Spring Security     │
+Flutter · Dio · jeton JWT                 │                            └─► fichiers des documents : backend/storage/documents
+                                          ├─► Ollama (IA locale) : llama3.2 (texte), llava (photos)
+                                          └─► Tesseract (OCR local des ordonnances)
 ```
 
 | Couche | Technologie | Rôle |
 |---|---|---|
-| Application mobile | Flutter (Dart), Riverpod, Dio | Écrans, formulaires, navigation ; envoie chaque requête avec le jeton JWT |
-| Session sur le téléphone | `flutter_secure_storage` | Garde le jeton de connexion chiffré (`core/storage/token_storage.dart`) |
+| Application | Flutter (Dart), Riverpod, Dio | Écrans, formulaires, navigation ; envoie chaque requête avec le jeton JWT. Même code pour Android et le web |
+| Session sur l'appareil | `flutter_secure_storage` | Garde le jeton de connexion chiffré (`core/storage/token_storage.dart`) |
 | API | Spring Boot 3.5, Spring Security, JWT | Vérifie l'identité, le rôle et les droits à chaque requête |
 | Données | PostgreSQL 18 (`app_medicare`), H2 en mode démo | 29 tables créées par Hibernate (JPA) |
-| Fichiers | Disque du serveur | Documents médicaux du module 5 |
-| IA | Ollama en local | Analyse santé, lecture des mesures par photo, reconnaissance des aliments, NutriCoach ; mode démonstration sans Ollama |
-
-L'application Android appelle l'API sur `http://192.168.1.199:8082/api`, l'adresse Wi-Fi du PC. Le fichier `network_security_config.xml` autorise ce trafic HTTP uniquement vers ces adresses (`192.168.1.199` sur MAXBOX, `192.168.1.112` sur Mizej) et vers les adresses de développement. Si le PC change de réseau Wi-Fi, il faut reconstruire l'APK avec la nouvelle adresse.
+| Fichiers | Disque du serveur | Documents médicaux et copies des ordonnances (module 5) |
+| IA locale | Ollama (`llama3.2`, `llava`), Tesseract | Analyse santé, lecture des mesures et des repas par photo, NutriCoach, analyse de documents, préremplissage du planning depuis une ordonnance |
 
 ### Les acteurs
 
 | Acteur | Rôle technique | Ce qu'il fait |
 |---|---|---|
 | Visiteur | aucun | S'inscrit, se connecte, récupère son compte |
-| Patient | `USER` | Prend ses rendez-vous, suit ses traitements, tient son suivi santé et nutrition, gère ses documents |
+| Patient | `USER` | Prend ses rendez-vous, consulte son planning de médicaments et confirme ses prises, tient son suivi santé et nutrition, consulte ses ordonnances et documents |
 | Secrétaire | `USER` + affectation | Patient qui gère en plus l'agenda du médecin auquel l'administrateur l'a affecté |
-| Médecin | `DOCTOR` | Prescrit, planifie les traitements, suit la santé de ses patients, partage des rappels et des documents |
+| Médecin | `DOCTOR` | Envoie les ordonnances, crée le planning de prises, suit la santé, l'observance et les documents de ses patients |
 | Administrateur | `ADMIN` | Valide les rôles et les fusions de comptes, affecte les secrétaires, consulte l'audit, administre les notifications |
 
-### Le lien médecin ↔ patient, partagé entre les modules
+### Équipe et répartition des modules
+
+| Module | Responsable | Périmètre |
+|---|---|---|
+| M1 · Authentification et sécurité | **Eya Rahmeni** | Comptes, rôles, connexion, double vérification, sécurité, administration |
+| M2 · Rendez-vous | **Mohamed Dhia Cherni** | Rendez-vous patient-médecin, agenda, secrétaires, rappels |
+| M3 · Médicaments | **Ameni Rahmeni** | Ordonnances, planning de prises, observance, stock |
+| M4 · Suivi santé et nutrition | **Mohamed Aziz Ouerfelli** | Mesures, objectifs, IMC, nutrition, hydratation, IA santé, dossier patient côté médecin |
+| M5 · Notifications et documents | **Iyed Gammar** | Notifications, rappels, documents médicaux, partage, analyse de documents |
+
+### Le lien médecin ↔ patient, partagé par tous les modules
 
 Un médecin **suit** un patient dès que l'une de ces conditions est vraie :
 
-- **Médicaments :** il lui a prescrit un traitement (ligne active dans `doctor_patient_assignments`) ;
-- **Rendez-vous :** le patient a un rendez-vous non annulé avec lui (`appointment.status ≠ CANCELLED`).
+| Origine du lien | Table | Créé quand |
+|---|---|---|
+| Traitement (M3) | `doctor_patient_assignments` (ligne active) | Le médecin envoie une ordonnance ou crée un planning pour le patient |
+| Rendez-vous (M2) | `appointment` (statut ≠ `CANCELLED`) | Le patient prend rendez-vous avec le médecin |
+| « Mes médecins » (M5) | `patient_doctor` | Le patient ajoute le médecin à ses contacts de soin |
 
-Ce lien ouvre au médecin le Suivi santé et nutrition du patient, les rappels de suivi et le dépôt de documents. Un médecin ne voit jamais les données d'un patient qu'il ne suit pas : toutes ces règles sont vérifiées côté serveur, qui répond `401`, `403` ou `404` en cas de refus.
+Cette règle est **unique** : elle est codée une seule fois (`HealthAccessService.follows` et `followedPatients`) et utilisée par les modules Médicaments, Suivi santé, Documents et Notifications. Le médecin voit donc partout la même liste de patients. Il ne voit jamais les données d'un patient qu'il ne suit pas : le serveur répond `403` ou `404`.
+
+### Synchronisation médecin ↔ patient
+
+| Ce que fait le médecin | Ce qui se passe chez le patient |
+|---|---|
+| Envoie une ordonnance | Elle est recopiée dans **Documents → Ordonnances** du patient, avec une notification « Nouvelle ordonnance » |
+| Ajoute un médicament à son planning | Le médicament et ses horaires apparaissent dans **Médicaments** et les prises du jour ; notification « Nouveau traitement » |
+| Enregistre une mesure de consultation | Elle apparaît dans le suivi du patient, signée par le médecin, non modifiable par le patient |
+
+| Ce que fait le patient | Ce que voit le médecin (dossier patient) |
+|---|---|
+| Confirme une prise (effectuée, manquée, ignorée, reportée) | Historique des prises, compteurs Pris / Oubliés, taux d'observance |
+| Ajoute une mesure, un repas, de l'eau | Suivi santé et nutrition, alertes |
+| Dépose un document | Tous les documents du patient, en lecture seule |
+
+Le médecin retrouve tout dans le **dossier patient** (`patient_file_page.dart`) : onglets Santé, Médicaments (traitement, prises, observance) et Documents (avec « Envoyer une ordonnance »), et dans l'écran **Observance des traitements** qui compare tous ses patients.
 
 ### Ce qui relie les modules
 
 | De | Vers | Comment |
 |---|---|---|
 | M1 Authentification | tous | Chaque table pointe vers `users` ; chaque requête porte le jeton JWT |
-| M2 Rendez-vous | M4 Suivi santé | Un rendez-vous non annulé donne au médecin l'accès au suivi du patient |
-| M3 Médicaments | M4 Suivi santé | Une ordonnance crée le lien `doctor_patient_assignments` |
+| M2 Rendez-vous | M3, M4, M5 | Un rendez-vous non annulé crée le lien médecin ↔ patient |
+| M3 Médicaments | M5 Documents | Chaque ordonnance est recopiée dans `medical_documents` (`prescription.document_id`) |
+| M3 Médicaments | M4 Suivi santé | L'observance du patient est affichée dans le dossier patient du médecin |
+| M5 « Mes médecins » | M3, M4 | Un lien `patient_doctor` donne au médecin l'accès au suivi, aux médicaments et aux documents |
 | M2, M3, M4 | M5 Notifications | Un intercepteur ajoute une notification après chaque écriture réussie |
+
+### Présentation commune des modules
+
+Chaque module ci-dessous suit le même plan :
+
+1. **Responsable, objectif** et rôle dans l'application ;
+2. **Fonctionnalités** par acteur ;
+3. **Volet intelligent** : IA ou traitements automatiques ;
+4. **Opérations CRUD** : qui crée, lit, modifie et supprime quoi ;
+5. **Écrans, API et tables** ;
+6. **Données** : schéma, tables et relations ;
+7. **Une action de bout en bout**, du téléphone à la base ;
+8. **Règles métier** ;
+9. **Synchronisation** avec les autres modules ;
+10. **Notions du cours** utilisées.
 
 ---
 
@@ -74,9 +121,11 @@ Ce lien ouvre au médecin le Suivi santé et nutrition du patient, les rappels d
 
 ### M1 · Authentification et sécurité
 
+**Responsable :** Eya Rahmeni
+
 **Objectif :** Donner à chaque personne un compte sûr et un rôle, et protéger l'accès à toutes les autres données.
 
-Toutes les autres tables pointent vers users. Ce module gère qui est connecté, avec quel rôle, et garde une trace des actions sensibles.
+Toutes les autres tables pointent vers `users`. Ce module décide qui est connecté, avec quel rôle, et garde une trace des actions sensibles.
 
 #### Fonctionnalités
 
@@ -91,14 +140,31 @@ Toutes les autres tables pointent vers users. Ce module gère qui est connecté,
 - Profil : nom, téléphone, date de naissance, bio, photo ; changement de mot de passe
 - Double vérification par email et 10 codes de récupération à usage unique
 - Demande de rôle et demande de rapprochement de deux comptes
-- Session conservée sur le téléphone ; retour à la connexion si le jeton expire
+- Session conservée sur l'appareil ; retour à la connexion si le jeton expire
 
 **Administrateur**
 
 - Validation des demandes de rôle et des fusions de comptes
 - Recherche des doublons, déclaration d'incident (révocation des sessions), journal d'audit
 
-**Sécurité :** Mots de passe de 12 caractères minimum, refus des mots de passe divulgués (Pwned Passwords), historique des 5 derniers, limitation des tentatives par IP, par compte et par code.
+#### Volet intelligent : protections automatiques
+
+| Protection | Fonctionnement |
+|---|---|
+| Mots de passe divulgués | À l'inscription et au changement, le serveur interroge Pwned Passwords par k-anonymat : seuls les 5 premiers caractères du hash SHA-1 sortent du serveur |
+| Limitation des tentatives | Filtre `AuthenticationRateLimitFilter` par adresse IP, par compte et par code |
+| Révocation des sessions | `token_version` dans chaque jeton : changer de mot de passe, de rôle ou de réglage MFA invalide tous les anciens jetons |
+| Doublons de comptes | L'administrateur voit les comptes qui se ressemblent et peut les fusionner, avec double preuve |
+
+#### Opérations CRUD
+
+| Donnée | Créer | Lire | Modifier | Supprimer |
+|---|---|---|---|---|
+| Compte (`users`) | Visiteur (inscription) | L'utilisateur (profil), l'administrateur | L'utilisateur (profil, mot de passe) ; l'administrateur (rôle) | Pas de suppression : fusion de comptes validée par l'administrateur |
+| Codes email (`email_challenge`) | Serveur | Serveur | Serveur (essais, consommation) | Expiration automatique |
+| Codes de récupération | L'utilisateur (génération) | L'utilisateur (une seule fois) | Consommés à l'usage | Remplacés à chaque régénération |
+| Demandes de rôle et de fusion | L'utilisateur | L'utilisateur, l'administrateur | L'administrateur (décision) | — |
+| Journal d'audit | Serveur | L'administrateur | — | — |
 
 #### Écrans, API et tables
 
@@ -207,18 +273,23 @@ erDiagram
 
 #### Une action de bout en bout
 
-1. **Téléphone** : Écran de connexion : email et mot de passe de `patient@medicare.com`.
+1. **Téléphone** : écran de connexion, email et mot de passe de `patient@medicare.com`.
 2. **Wi-Fi** : `POST /api/auth/login` vers `192.168.1.199:8082`.
 3. **API** : `AuthService` compare le mot de passe au hash BCrypt de `users.password`.
-4. **PostgreSQL** : Lecture de `users` ; si la MFA est active, `INSERT email_challenge` et un code est envoyé.
-5. **Retour** : Un jeton JWT contenant `userId`, `role` et `token_version` est stocké dans l'app.
+4. **PostgreSQL** : lecture de `users` ; si la MFA est active, `INSERT email_challenge` et un code est envoyé.
+5. **Retour** : un jeton JWT contenant `userId`, `role` et `token_version` est stocké dans `flutter_secure_storage`.
 
 #### Règles métier
 
-- **Révocation des jetons** : Chaque jeton porte la valeur de `users.token_version`. Un changement de mot de passe, de rôle, de réglage MFA ou une fusion de compte incrémente ce numéro, et tous les anciens jetons sont refusés.
-- **Aucun secret en clair** : Mots de passe, codes email et codes de secours sont stockés hachés (`password`, `code_hash`). La base ne permet pas de les relire.
-- **Mot de passe neuf** : `password_history` garde les 5 derniers hashs ; réutiliser l'un d'eux est refusé.
-- **Secrétaire = USER** : Il n'existe pas de rôle secrétaire : c'est un compte USER relié à un médecin dans `appointment_secretary_doctors` (module Rendez-vous).
+- **Révocation des jetons** : chaque jeton porte la valeur de `users.token_version`. Un changement de mot de passe, de rôle, de réglage MFA ou une fusion de comptes incrémente ce numéro, et tous les anciens jetons sont refusés.
+- **Aucun secret en clair** : mots de passe, codes email et codes de secours sont stockés hachés (`password`, `code_hash`).
+- **Mot de passe neuf** : 12 caractères minimum ; `password_history` garde les 5 derniers hashs, réutiliser l'un d'eux est refusé.
+- **Secrétaire = USER** : il n'existe pas de rôle secrétaire, c'est un compte USER relié à un médecin dans `appointment_secretary_doctors` (module Rendez-vous).
+
+#### Synchronisation avec les autres modules
+
+- Le rôle (`USER`, `DOCTOR`, `ADMIN`) décide de l'écran d'accueil : tableau de bord médecin, espace patient ou administration.
+- Toutes les règles d'accès des modules M2 à M5 partent de l'utilisateur identifié par le jeton : un patient n'est jamais choisi à partir d'un identifiant envoyé par l'application.
 
 #### Notions du cours utilisées dans ce module
 
@@ -228,42 +299,59 @@ erDiagram
 
 ### M2 · Rendez-vous
 
+**Responsable :** Mohamed Dhia Cherni
+
 **Objectif :** Organiser les consultations entre patients et médecins, avec l'aide des secrétaires.
 
-Un rendez-vous relie un patient et un médecin. Ce lien sert aussi au module Suivi santé : un rendez-vous non annulé autorise le médecin à voir le suivi du patient.
+Un rendez-vous relie un patient et un médecin. Tant qu'il n'est pas annulé, ce rendez-vous fait aussi du médecin le **médecin qui suit** ce patient dans tous les autres modules.
 
 #### Fonctionnalités
 
 **Patient**
 
 - Prise de rendez-vous avec un médecin : date, heure, motif, type de consultation
-- Agenda (calendrier) ou liste, recherche, filtres par statut
+- Agenda (calendrier) ou liste, recherche, filtres par statut, historique et rendez-vous à venir
 - Modification, annulation, suppression ; contrôle des conflits d'horaire
-- Suggestion de spécialité selon le motif et d'un créneau libre dans les 30 jours
-- Estimation du risque d'absence
+- Statistiques de ses rendez-vous
 
 **Secrétaire**
 
-- Liste des patients, création, modification et suppression des rendez-vous du médecin affecté
+- Liste des patients ; création, modification et suppression des rendez-vous des médecins qui lui sont affectés
 - Envoi manuel des rappels
+
+**Médecin**
+
+- Les patients qui ont un rendez-vous avec lui apparaissent dans « Patients suivis », avec leur dossier (santé, médicaments, documents)
 
 **Administrateur**
 
 - Affectation des secrétaires aux médecins
 
-**Automatique**
+#### Volet intelligent : aide à la décision et automatisation
 
-- Rappel par email (et SMS si configuré) 24 h avant le rendez-vous
+| Fonction | Fonctionnement |
+|---|---|
+| Suggestion de spécialité | À partir des mots du motif (ex. « douleur poitrine » → cardiologie), l'application propose le type de consultation |
+| Premier créneau libre | Recherche d'un créneau disponible dans les 30 jours chez le médecin choisi |
+| Risque d'absence | Score calculé par le serveur : statut non confirmé, rendez-vous pris longtemps à l'avance, taux d'annulation du patient ; chaque facteur est expliqué |
+| Rappel automatique | Tâche planifiée toutes les heures : email (et SMS si configuré) environ 24 h avant le rendez-vous, une seule fois |
+
+#### Opérations CRUD
+
+| Donnée | Créer | Lire | Modifier | Supprimer |
+|---|---|---|---|---|
+| Rendez-vous (`appointment`) | Patient ; secrétaire pour ses médecins | Patient (les siens) ; secrétaire (ses médecins) | Patient ; secrétaire | Patient ; secrétaire (annuler garde la ligne avec `CANCELLED`) |
+| Affectation secrétaire ↔ médecin | Administrateur | Administrateur, secrétaire | — | Administrateur |
 
 #### Écrans, API et tables
 
 | Écran de l'app | Fichier Flutter | Routes API (`/api…`) | Backend | Tables |
 |---|---|---|---|---|
-| Mes rendez-vous (patient) | `appointments_page.dart` | **GET** /appointments, /appointments/doctors, /appointments/statistics · **POST** · **PUT** · **DELETE** /appointments/{id} | AppointmentController | `appointment`, `users` |
+| Mes rendez-vous (patient) | `appointments_page.dart` | **GET** /appointments, /appointments/doctors, /history, /upcoming, /statistics · **POST** · **PUT** · **DELETE** /appointments/{id} | AppointmentController | `appointment`, `users` |
 | Risque d'absence | `appointments_page.dart` | **GET** /appointments/{id}/no-show-risk | AppointmentController | `appointment (lecture)` |
-| Espace secrétaire | `secretary_appointments_page.dart` | **GET** /secretary/me, /secretary/doctors, /secretary/patients · **POST** · **PUT** /secretary/appointments/{id} | SecretaryAppointmentController | `appointment`, `appointment_secretary_doctors` |
+| Espace secrétaire | `secretary_appointments_page.dart` | **GET** /secretary/me, /secretary/doctors, /secretary/patients · **POST** · **PUT** · **DELETE** /secretary/appointments/{id} | SecretaryAppointmentController | `appointment`, `appointment_secretary_doctors` |
 | Attribution des secrétaires (admin) | `secretary_appointments_page.dart` | **GET** · **POST** · **DELETE** /secretary/admin/assignments/{id} | SecretaryAppointmentController | `appointment_secretary_doctors` |
-| Envoi des rappels | `secretary_appointments_page.dart + tâche planifiée` | **POST** /secretary/reminders/run · cron toutes les heures | AppointmentReminderService | `appointment.reminder_sent_at` |
+| Envoi des rappels | `secretary_appointments_page.dart` + tâche planifiée | **POST** /secretary/reminders/run · cron toutes les heures | AppointmentReminderService | `appointment.reminder_sent_at` |
 
 #### Données
 
@@ -306,18 +394,23 @@ erDiagram
 
 #### Une action de bout en bout
 
-1. **Téléphone** : Rendez-vous → nouveau rendez-vous avec Dr Sarah, date et motif.
+1. **Téléphone** : Rendez-vous → nouveau rendez-vous avec le Dr Ahmed, date et motif.
 2. **Wi-Fi** : `POST /api/appointments` avec le jeton du patient.
 3. **API** : `AppointmentController` vérifie le médecin et le créneau ; le patient vient du jeton.
-4. **PostgreSQL** : `INSERT appointment (user_id, doctor_id, status='PLANNED')` puis `INSERT notifications` (module 5).
-5. **Effet** : Dr Sarah voit maintenant ce patient dans « Suivi santé et nutrition des patients ».
+4. **PostgreSQL** : `INSERT appointment (user_id, doctor_id, status='PLANNED')`, puis `INSERT notifications` (module 5).
+5. **Effet** : le Dr Ahmed voit maintenant ce patient dans « Patients suivis » et peut ouvrir son dossier.
 
 #### Règles métier
 
-- **Rappel une seule fois** : Toutes les heures, la tâche planifiée cherche les rendez-vous PLANNED ou CONFIRMED proches dont `reminder_sent_at` est vide, envoie email et SMS, puis remplit la colonne.
-- **Périmètre de la secrétaire** : Une secrétaire ne voit et ne modifie que les rendez-vous des médecins qui lui sont attribués dans `appointment_secretary_doctors`.
-- **Annuler sans supprimer** : Un rendez-vous annulé garde sa ligne avec `status = CANCELLED` ; il ne donne plus accès au suivi santé.
+- **Rappel une seule fois** : toutes les heures, la tâche planifiée cherche les rendez-vous PLANNED ou CONFIRMED proches dont `reminder_sent_at` est vide, envoie le rappel, puis remplit la colonne.
+- **Périmètre de la secrétaire** : une secrétaire ne voit et ne modifie que les rendez-vous des médecins qui lui sont attribués dans `appointment_secretary_doctors`.
+- **Annuler sans supprimer** : un rendez-vous annulé garde sa ligne avec `status = CANCELLED` ; il ne crée plus de lien médecin ↔ patient.
 - **Nom du médecin copié** : `doctor_name` est enregistré dans le rendez-vous pour l'affichage, en plus de la clé `doctor_id`.
+
+#### Synchronisation avec les autres modules
+
+- **M3, M4, M5** : un rendez-vous non annulé suffit pour que le médecin voie le dossier du patient (santé, médicaments, documents) et puisse lui envoyer une ordonnance.
+- **M5** : chaque rendez-vous créé, modifié ou supprimé produit une notification « Rendez-vous » pour le patient.
 
 #### Notions du cours utilisées dans ce module
 
@@ -327,41 +420,70 @@ erDiagram
 
 ### M3 · Médicaments
 
-**Objectif :** Transformer une ordonnance en planning de prises, puis suivre l'observance et le stock.
+**Responsable :** Ameni Rahmeni
 
-Le médecin dépose une ordonnance, l'app en extrait les médicaments, puis le patient suit ses prises et son stock. Une ordonnance crée aussi le lien médecin-patient utilisé par le Suivi santé.
+**Objectif :** Transformer une ordonnance en planning de prises, puis suivre les prises, l'observance et le stock, côté patient comme côté médecin.
+
+Le médecin envoie l'ordonnance et crée le planning ; le patient reçoit son traitement, confirme chaque prise, et le médecin suit l'observance. Toute ordonnance est aussi recopiée dans les documents du patient (module 5).
 
 #### Fonctionnalités
 
 **Médecin**
 
-- Dépôt d'une ordonnance (photo ou PDF) pour un patient, lecture automatique (OCR) qui propose les médicaments
-- Création et modification du planning de prise, arrêt d'un traitement sans effacer l'historique
-- Liste des patients suivis, prescriptions et observance par patient
+- « Envoyer une ordonnance et préparer le planning » : choix du patient, dépôt du fichier (photo ou PDF), envoi immédiat ; le planning peut être prérempli à partir de l'ordonnance
+- « Ajouter un médicament au planning d'un patient » : directement, sans ordonnance à déposer (tableau de bord ou dossier patient)
+- Modification du planning, arrêt d'un traitement sans effacer l'historique
+- Dossier patient, onglet Médicaments : tout le traitement en cours, historique des prises (toutes, prises, oubliées), compteurs Pris / Oubliés / Observance sur 30 jours
+- « Observance des traitements » : taux d'observance de chaque patient sur 7 ou 30 jours, prises oubliées, dernier oubli
 
 **Patient**
 
-- Consultation de ses traitements, de son agenda de prises, de ses ordonnances et de son historique
-- Prises du jour : effectuée, manquée, ignorée ou reportée
+- Mes traitements : médicaments ajoutés par le médecin, horaires et jours de prise
+- Prises du jour et historique : le patient confirme chaque prise, **effectuée, manquée, ignorée ou reportée**
+- Statistiques d'observance (jour, semaine, mois)
+- « Mes ordonnances » : accès direct à Documents → Ordonnances
 - Notifications locales de rappel de prise sur le téléphone
-- Assistant traitement : questions sur le planning en cours
+- Assistant traitement : réponses aux questions sur le planning en cours
 
 **Stock**
 
-- Quantité, seuil d'alerte, réapprovisionnement, estimation des jours restants
+- Quantité, seuil d'alerte, réapprovisionnement ; chaque prise confirmée retire une dose
+
+#### Volet intelligent : préremplir le planning de votre patient
+
+1. Le médecin choisit le patient et le fichier de l'ordonnance (PDF, JPG ou PNG, 10 Mo maximum).
+2. « Préremplir le planning de votre patient » envoie le fichier à `POST /api/prescriptions/extract-medications`.
+3. Le serveur lit l'ordonnance en local avec **Tesseract** (OCR), puis `PrescriptionMedicationParser` repère le nom, le dosage, la forme, le nombre de prises par jour et les consignes.
+4. Chaque médicament proposé s'ouvre dans le formulaire ; le médecin vérifie, complète (horaires, jours, dates) et confirme.
+5. À l'envoi, l'ordonnance et les médicaments confirmés sont enregistrés ; **rien n'est enregistré sans confirmation du médecin**.
+
+| Autre fonction | Fonctionnement |
+|---|---|
+| Assistant traitement | Réponses locales (sans serveur) aux questions sur un médicament du planning : horaires, oubli de prise, stock |
+| Génération des prises | Le serveur crée les prises (`medication_reminder`) à partir des horaires, des jours et des dates du traitement |
+| Rappels sur le téléphone | `flutter_local_notifications` programme les rappels sur l'appareil du patient uniquement |
+
+#### Opérations CRUD
+
+| Donnée | Créer | Lire | Modifier | Supprimer |
+|---|---|---|---|---|
+| Ordonnance (`prescription`) | Médecin | Médecin (les siennes) ; patient (via Documents) | Médecin | Médecin (archivage) |
+| Médicament / planning (`medication`) | Médecin, pour un patient qu'il suit | Patient ; médecin qui le suit | Médecin (ses ordonnances) | Médecin (arrêt : `DISCONTINUED`, l'historique est gardé) |
+| Prise (`medication_reminder`) | Serveur (à partir du planning) | Patient ; médecin qui le suit | **Patient** (confirme sa prise) ; médecin | Prises futures non faites supprimées si le planning change |
+| Stock (`medication_stock_entry`) | Serveur (prise), médecin (réapprovisionnement) | Patient, médecin | Médecin (correction) | — (mouvement inverse au lieu d'effacer) |
 
 #### Écrans, API et tables
 
 | Écran de l'app | Fichier Flutter | Routes API (`/api…`) | Backend | Tables |
 |---|---|---|---|---|
-| Mes médicaments | `medications_page.dart` | **GET** /medications · **PUT** /medications/{id}/schedule · **POST** /medications/reminders/{id}/{action}, /snooze | MedicationController | `medication`, `medication_reminder`, `medication_stock_entry` |
-| Ajouter / modifier | `medication_form_page.dart` | **POST** /medications · **PUT** /medications/{id} | MedicationController | `medication`, `medication_reminder_times`, `medication_weekdays` |
+| Mes traitements (patient) | `medications_page.dart · medication_card.dart` | **GET** /medications, /medications/today, /medications/{id}/schedule · **POST** /medications/reminders/{id}/taken, /missed, /skipped, /snooze | MedicationController | `medication`, `medication_reminder` |
 | Historique des prises | `medication_history_page.dart` | **GET** /medications/{id}/history · **POST** /medications/reminders/{id}/{action} | MedicationController | `medication_reminder`, `medication_stock_entry` |
 | Stock | `medication_stock_page.dart` | **GET** /medications/{id}/stock · **POST** /medications/{id}/stock/refill | MedicationController | `medication`, `medication_stock_entry` |
-| Statistiques d'observance | `medication_statistics_page.dart` | **GET** /medications/statistics, /medications/today | MedicationController | `medication_reminder (lecture)` |
-| Déposer une ordonnance (médecin) | `prescription_upload_page.dart` | **POST** /prescriptions/extract-medications, /prescriptions/upload · **GET** /prescriptions/patients | PrescriptionController (OCR Tesseract) | `prescription`, `medication`, `doctor_patient_assignments` |
-| Ordonnances | `prescriptions_page.dart` | **GET** /prescriptions · **PUT** · **DELETE** /prescriptions/{id} · **GET** /prescriptions/{id}/document | PrescriptionController | `prescription` |
-| Patients suivis (médecin) | `followed_patients_page.dart` | **GET** /prescriptions/patients/followed | PrescriptionController | `doctor_patient_assignments`, `medication_reminder` |
+| Statistiques d'observance | `medication_statistics_page.dart` | **GET** /medications/statistics, /medications/today (`?patientId=` pour le médecin) | MedicationController | `medication_reminder (lecture)` |
+| Ajouter au planning (médecin) | `medication_form_page.dart` | **POST** /medications (avec `patientId` ou `prescriptionId`) · **PUT** /medications/{id} | MedicationController | `medication`, `medication_reminder_times`, `medication_weekdays`, `prescription` |
+| Envoyer une ordonnance (médecin) | `prescription_upload_page.dart` | **GET** /prescriptions/patients · **POST** /prescriptions/extract-medications, /prescriptions/upload | PrescriptionController (Tesseract) + PrescriptionDocumentSync | `prescription`, `medication`, `doctor_patient_assignments`, `medical_documents` |
+| Dossier patient, onglet Médicaments | `patient_file_page.dart` | **GET** /medications?patientId=, /medications/intakes?patientId= | MedicationController | `medication`, `medication_reminder` |
+| Observance des patients | `patients_adherence_page.dart` | **GET** /medications/adherence/patients?days=7 | MedicationController | `medication_reminder (lecture)` |
 
 #### Données
 
@@ -372,6 +494,7 @@ erDiagram
     col doctor_id FK
     col patient_id FK
     col prescription_date
+    col document_id FK
     col diagnosis
     col notes
     col document_data
@@ -448,7 +571,7 @@ erDiagram
 
 | Table | Rôle | Colonnes principales |
 |---|---|---|
-| `prescription` | ordonnance | `id` PK, `doctor_id` FK → users, `patient_id` FK → users, `prescription_date`, `diagnosis · notes`, `document_data`, `document_name · content_type` |
+| `prescription` | ordonnance | `id` PK, `doctor_id` FK → users, `patient_id` FK → users, `prescription_date`, `diagnosis · notes`, `document_data`, `document_name · content_type`, `document_id` FK → medical_documents (copie dans Documents) |
 | `medication` | traitement | `id` PK, `user_id` FK → users, `prescription_id` FK → prescription, `name · dosage · pharmaceutical_form`, `frequency_per_day · units_per_dose`, `start_date · end_date`, `status` |
 | `medication_reminder` | une prise prévue | `id` PK, `medication_id` FK → medication, `date · time`, `status`, `taken · taken_at`, `snoozed_until`, `intake_note` |
 | `medication_stock_entry` | mouvement de stock | `id` PK, `medication_id` FK → medication, `reminder_id` FK → medication_reminder, `type`, `quantity_change · quantity_after`, `note · created_at` |
@@ -462,38 +585,50 @@ erDiagram
 - `medication 1 ─ N` : medication_reminder : une ligne par prise prévue
 - `medication 1 ─ N` : medication_reminder_times, medication_weekdays : le planning
 - `reminder 1 ─ N` : medication_stock_entry : chaque prise retire du stock, l'annuler le rend
-- `prescription → assignments` : déposer une ordonnance crée le lien médecin-patient s'il n'existe pas
+- `prescription → assignments` : une ordonnance ou un planning créé par le médecin crée le lien médecin-patient s'il n'existe pas
+- `prescription → medical_documents` : `document_id`, la copie de l'ordonnance dans les documents du patient (module 5)
 
 #### Une action de bout en bout
 
-1. **Téléphone** : Le patient appuie sur « Pris » pour une prise de 08:00 de son traitement.
-2. **Wi-Fi** : `POST /api/medications/reminders/{id}/taken`.
-3. **API** : `MedicationController` vérifie que la prise appartient au patient.
-4. **PostgreSQL** : `UPDATE medication_reminder` (TAKEN), `UPDATE medication.stock_quantity`, `INSERT medication_stock_entry` (INTAKE_DEDUCTION).
-5. **Retour** : Stock et taux d'observance mis à jour ; une notification « Médicaments » est créée.
+Parcours vérifié sur la vraie base avec le Dr Ahmed et ses patients (Amine Trabelsi, Patient Test), données de test supprimées ensuite :
+
+1. **Médecin** : « Ajouter un médicament au planning d'un patient » → Amine → Amoxicilline, prise à 08:00.
+2. **API** : `POST /api/medications` avec `patientId=7` ; le serveur vérifie que le Dr Ahmed suit Amine, rattache le médicament à son ordonnance « Planning de traitement » et crée la notification « Nouveau traitement ».
+3. **Patient** : Amine voit Amoxicilline dans Mes traitements et dans ses prises du jour ; il appuie sur « Effectuée ».
+4. **PostgreSQL** : `UPDATE medication_reminder SET status='TAKEN'` ; si le stock est suivi, `INSERT medication_stock_entry` (INTAKE_DEDUCTION).
+5. **Médecin** : dans Observance des traitements, Amine passe à 1 prise et 100 %.
 
 #### Règles métier
 
-- **Ordonnance dans la base** : Le fichier de l'ordonnance est stocké dans PostgreSQL (`document_data`, type `oid`), contrairement aux documents du module 5 stockés sur disque.
-- **Extraction sans enregistrement** : `/prescriptions/extract-medications` lit l'ordonnance par OCR et propose des médicaments ; rien n'est écrit tant que le médecin n'a pas choisi le patient et validé.
-- **Stock réversible** : Annuler une prise crée une entrée INTAKE_REFUND qui rend la dose, au lieu d'effacer l'historique.
-- **Accès au suivi santé** : Une ligne active dans `doctor_patient_assignments` donne au médecin l'accès au Suivi santé et nutrition du patient.
+- **Seul le médecin qui suit le patient** peut créer son planning ; un patient non suivi est refusé (`404`).
+- **Le patient confirme ses prises** (effectuée, manquée, ignorée, reportée) mais ne peut pas modifier son traitement ; un autre patient ne peut pas toucher à ses prises (`404`).
+- **Ordonnance dans la base et dans Documents** : le fichier est stocké dans `prescription.document_data` et recopié dans `medical_documents` ; `prescription.document_id` garde le lien.
+- **Stock réversible** : annuler une prise crée une entrée INTAKE_REFUND qui rend la dose, au lieu d'effacer l'historique.
+- **Rappels sur l'appareil du patient uniquement** : le téléphone d'un médecin ou d'un administrateur ne programme jamais les rappels des patients.
+
+#### Synchronisation avec les autres modules
+
+- **M5 Documents** : chaque ordonnance envoyée arrive dans Documents → Ordonnances du patient, avec la notification « Nouvelle ordonnance ». Les ordonnances déjà enregistrées sont recopiées au démarrage du serveur.
+- **M4 Suivi santé** : le dossier patient du médecin réunit santé, médicaments et documents.
+- **M2 Rendez-vous et M5 « Mes médecins »** : ils suffisent pour que le médecin puisse créer le planning d'un patient.
 
 #### Notions du cours utilisées dans ce module
 
-`Card` (`medication_card.dart`), `ListView` et `ListView.builder()`, formulaire `Form` + `TextFormField` (`medication_form_page.dart`), `Navigator.push()` vers le détail, l'historique et le stock, `fromJson` dans les modèles, notifications locales (`flutter_local_notifications`).
+`Card` (`medication_card.dart`), `ListView` et `ListView.builder()`, formulaire `Form` + `TextFormField` + `validate()` (`medication_form_page.dart`), `Navigator.push()` avec passage de paramètres (`MedicationFormPage(patientId: …)`), `fromJson` dans les modèles, `SegmentedButton` (filtres), notifications locales (`flutter_local_notifications`).
 
 ---
 
 ### M4 · Suivi santé et nutrition
 
-**Objectif :** Permettre au patient de suivre ses constantes, son alimentation et son hydratation, et au médecin de suivre ses patients.
+**Responsable :** Mohamed Aziz Ouerfelli
 
-Toutes les tables de ce module appartiennent à un patient par user_id ; il lit les tables des modules Médicaments et Rendez-vous pour savoir quel médecin suit quel patient.
+**Objectif :** Permettre au patient de suivre ses constantes, son alimentation et son hydratation, et au médecin de suivre ses patients depuis un dossier unique.
+
+Toutes les tables de ce module appartiennent à un patient par `user_id`. Le module porte aussi la règle commune « quel médecin suit quel patient » (`HealthAccessService`) utilisée par les autres modules.
 
 #### Fonctionnalités
 
-**Santé**
+**Patient · Santé**
 
 - Mesures : poids, fréquence cardiaque, tension, température, glycémie, avec date, heure et note
 - Formulaire de mesure organisé par appareil (tensiomètre, thermomètre, pèse-personne, lecteur de glycémie) : saisie manuelle ou lecture IA par photo
@@ -502,24 +637,33 @@ Toutes les tables de ce module appartiennent à un patient par user_id ; il lit 
 - IMC calculé avec le dernier poids mesuré (jamais le poids cible), échelle OMS : < 18,5 · 18,5–25 · 25–30 · ≥ 30
 - Objectifs : taille, poids cible, calories et eau quotidiennes
 
-**Nutrition**
+**Patient · Nutrition**
 
 - Journal alimentaire par repas, avec aliments et quantités
 - Base de 44 aliments : nutriments calculés selon la quantité
 - Hydratation : ajout rapide ou quantité libre, progression, historique sur 7 jours
+- Statistiques sur 7 jours à 6 mois et export PDF du rapport
 
-**Analyse et IA**
+**Médecin**
 
-- Statistiques sur 7 j à 6 mois et export PDF du rapport
-- Analyse santé avec alertes (fièvre, hypertension, hyperglycémie…) : statut et urgence décidés par des seuils médicaux fixes, résumé et conseils rédigés par llama3.2
-- **Lecture d'une mesure par photo** (llava) : une photo par appareil, valeurs lues pré-remplies à côté de la photo, vérifiées et validées par le patient
-- Reconnaissance des aliments par photo ou description, NutriCoach (Ollama)
-- Réponses IA rapides : modèle préchargé au démarrage du backend et gardé en mémoire 60 min (`keep_alive`)
+- Patients suivis (traitement, rendez-vous ou « Mes médecins ») avec dernières constantes et alertes
+- **Dossier patient** : onglets Santé, Médicaments (observance) et Documents
+- Mesures de consultation signées, ajustement des objectifs ; repas et eau en lecture seule
 
-**Volet IA : lecture d'une mesure par photo**
+#### Volet intelligent : IA locale (Ollama)
+
+| Fonction | Modèle | Fonctionnement |
+|---|---|---|
+| Analyse santé | llama3.2 | Synthèse des 30 derniers jours calculée par le serveur ; statut et urgence décidés par des seuils médicaux fixes ; le modèle rédige le résumé et les conseils |
+| Lecture d'une mesure par photo | llava | Une photo par appareil ; valeurs contrôlées puis pré-remplies, validées par le patient |
+| Reconnaissance des aliments | llava / llama3.2 | Par photo ou description : aliments, quantités, calories et macronutriments, corrigeables avant enregistrement |
+| NutriCoach | llama3.2 | Assistant de conversation sur l'alimentation (8 derniers messages envoyés) |
+| Rapidité | — | Modèle préchargé au démarrage et gardé en mémoire 60 min (`keep_alive`) |
+
+**Lecture d'une mesure par photo**
 
 1. Le patient appuie sur « Lire par photo » dans le bloc de l'appareil et photographie son écran (ou choisit une photo).
-2. L'app envoie l'image en base64 à `POST /api/health/ai/read-device` avec l'appareil : `BLOOD_PRESSURE`, `TEMPERATURE`, `WEIGHT` ou `GLYCEMIA`.
+2. L'application envoie l'image en base64 à `POST /api/health/ai/read-device` avec l'appareil : `BLOOD_PRESSURE`, `TEMPERATURE`, `WEIGHT` ou `GLYCEMIA`.
 3. Le serveur la transmet au modèle de vision llava (Ollama, en local), qui renvoie les chiffres lus en JSON.
 4. Le serveur vérifie que les valeurs sont plausibles, puis renvoie succès ou échec avec un message.
 5. Les valeurs pré-remplissent le formulaire, sur fond vert « Lu par l'IA — vérifiez ». Le patient corrige si besoin, coche « J'ai vérifié… », puis enregistre. **Rien n'est enregistré sans sa confirmation.**
@@ -533,10 +677,15 @@ Toutes les tables de ce module appartiennent à un patient par user_id ; il lit 
 
 Si aucun écran n'est reconnu ou si une valeur est hors plage, le message demande de reprendre la photo. Temps de lecture : 10 à 17 s (environ 60 s pour la première, le temps de charger le modèle).
 
-**Médecin**
+#### Opérations CRUD
 
-- Patients suivis avec dernières constantes et alertes
-- Mesures de consultation signées, ajustement des objectifs ; repas et eau en lecture seule
+| Donnée | Créer | Lire | Modifier | Supprimer |
+|---|---|---|---|---|
+| Mesure (`health_record`) | Patient ; médecin (mesure de consultation) | Patient ; médecin qui le suit | Auteur de la mesure | Auteur de la mesure |
+| Objectifs (`health_goal`) | Patient ; médecin | Patient ; médecin | Patient ; médecin | — (une seule ligne par patient) |
+| Repas (`meal`) | Patient | Patient ; médecin (lecture seule) | Patient | Patient |
+| Eau (`hydration`) | Patient | Patient ; médecin (lecture seule) | Patient | Patient |
+| Aliments (`food`) | Données de base (44 aliments) | Tous | — | — |
 
 #### Écrans, API et tables
 
@@ -544,11 +693,12 @@ Si aucun écran n'est reconnu ou si une valeur est hors plage, le message demand
 |---|---|---|---|---|
 | Tableau de bord | `health_dashboard_tab.dart` | **GET** /health-records, /meals/stats/today, /hydration/today, /health-goals · **POST** /hydration | plusieurs | `health_record`, `meal`, `hydration`, `health_goal` |
 | Mesures | `measures_tab.dart · measure_form.dart` | **GET** · **POST** · **PUT** · **DELETE** /health-records/{id} | HealthRecordController | `health_record`, `notifications` |
-| Lecture IA d'une mesure (photo) | `measure_form.dart` | **POST** /health/ai/read-device | HealthAiController → DeviceReadingService → Ollama llava | aucune (lecture seule ; l'enregistrement passe par **POST** /health-records) |
+| Lecture IA d'une mesure (photo) | `measure_form.dart` | **POST** /health/ai/read-device | HealthAiController → DeviceReadingService → Ollama llava | aucune (l'enregistrement passe par **POST** /health-records) |
 | Nutrition | `nutrition_tab.dart · meal_form_page.dart` | **GET** · **POST** · **PUT** · **DELETE** /meals/{id}, /hydration/{id} · **GET** /foods | MealController, HydrationController, FoodController | `meal`, `hydration`, `food` |
 | Objectifs | `health_goals_page.dart` | **GET** · **POST** /health-goals | HealthGoalController | `health_goal` |
 | Statistiques, PDF, IA | `health_stats_page.dart · health_ai_page.dart · ai_food_page.dart · nutrition_chat_page.dart` | **GET** …/history, /health/ai/analyze · **POST** /nutrition/ai/analyze, /nutrition/chat | HealthAiController, NutritionAiController → Ollama | `health_record`, `meal`, `hydration` |
-| Patients suivis (médecin) | `doctor_health_patients_page.dart` | **GET** /health/patients, puis les routes avec ?patientId= | DoctorHealthController | `doctor_patient_assignments`, `appointment` |
+| Patients suivis (médecin) | `followed_patients_page.dart · doctor_health_patients_page.dart` | **GET** /health/patients | DoctorHealthController | `doctor_patient_assignments`, `appointment`, `patient_doctor` |
+| Dossier patient (médecin) | `patient_file_page.dart` | Routes ci-dessus avec `?patientId=` + /medications, /documents | plusieurs | toutes les tables du patient |
 
 #### Données
 
@@ -632,70 +782,108 @@ erDiagram
 - `users 1 ─ N` : health_record, meal, hydration
 - `users 1 ─ 1` : health_goal (user_id UNIQUE)
 - `food ┄ meal` : pas de clé étrangère : valeurs nutritives copiées dans le repas
-- `assignments, appointment` : décident quel médecin voit le suivi d'un patient
+- `assignments, appointment, patient_doctor` : décident quel médecin suit le patient (règle commune `HealthAccessService`)
 
 #### Une action de bout en bout
 
-1. **Téléphone** : Nutrition → Hydratation → ajout de 330 ml (test réel sur le CRT NX1, id 231).
+1. **Téléphone** : Nutrition → Hydratation → ajout de 330 ml (test réel sur le CRT NX1).
 2. **Wi-Fi** : `POST /api/hydration`.
 3. **API** : `HydrationController` enregistre l'eau au nom de l'utilisateur du jeton.
 4. **PostgreSQL** : `INSERT hydration (user_id=6, quantity_ml=330)`.
-5. **Retour** : L'app recharge `/hydration/today` ; le total du jour augmente.
+5. **Retour** : l'application recharge `/hydration/today` ; le total du jour augmente, et le médecin le voit dans le dossier du patient.
 
 #### Règles métier
 
-- **Mesure de consultation** : `recorded_by_id` renseigné : le patient voit la mesure avec un cadenas, sans pouvoir la modifier.
-- **Un seul jeu d'objectifs** : Enregistrer les objectifs met à jour la ligne existante grâce à `user_id UNIQUE`.
+- **Mesure de consultation** : `recorded_by_id` renseigné ; le patient voit la mesure avec un cadenas, sans pouvoir la modifier.
+- **Un seul jeu d'objectifs** : enregistrer les objectifs met à jour la ligne existante grâce à `user_id UNIQUE`.
 - **Calculs non stockés** : IMC, moyennes et alertes sont recalculés à chaque appel ; aucune table ne les conserve.
-- **Notifications** : Seules les écritures sur `/health-records` créent une notification « Mesures de santé ».
 - **Lecture IA par photo** : la photo n'est ni stockée ni enregistrée ; seules les valeurs validées par le patient sont insérées dans `health_record`.
 - **IA sans hallucination** : sur une photo sans écran d'appareil, le modèle doit renvoyer null (consignes sans valeur d'exemple) ; le serveur refuse alors la lecture.
 
+#### Synchronisation avec les autres modules
+
+- **Règle commune de suivi** : `HealthAccessService` réunit les trois origines du lien (traitement, rendez-vous, « Mes médecins ») pour tous les modules.
+- **M3 et M5** : le dossier patient affiche dans le même écran le traitement, les prises et l'observance (M3) et les documents et ordonnances (M5).
+- **M5** : chaque écriture sur `/health-records` crée une notification « Mesures de santé ».
+
 #### Notions du cours utilisées dans ce module
 
-`TabBar` / `TabBarView` (Tableau de bord, Mesures, Nutrition dans `health_page.dart`), `Card`, `ListView`, `ListView.builder()` (NutriCoach), `ListView.separated()` (choix d'un aliment), `Form` + `TextFormField` + `validate()` (`measure_form.dart`, `meal_form_page.dart`), `CheckboxListTile` (confirmation des valeurs lues par l'IA), `TextField`, `Image.memory` (photo du repas et de l'écran de l'appareil), `dart:convert` (`base64Encode`), `Navigator.push()`.
+`TabBar` / `TabBarView` (Tableau de bord, Mesures, Nutrition dans `health_page.dart` ; Santé, Médicaments, Documents dans `patient_file_page.dart`), `Card`, `ListView`, `ListView.builder()` (NutriCoach), `ListView.separated()` (choix d'un aliment), `Form` + `TextFormField` + `validate()` (`measure_form.dart`, `meal_form_page.dart`), `CheckboxListTile` (confirmation des valeurs lues par l'IA), `TextField`, `Image.memory` (photo du repas et de l'écran de l'appareil), `dart:convert` (`base64Encode`), `Navigator.push()`.
 
 ---
 
 ### M5 · Notifications et documents
 
-**Objectif :** Informer chaque utilisateur de ce qui le concerne et centraliser ses documents médicaux.
+**Responsable :** Iyed Gammar
 
-Le module ajouté par votre collègue. Les notifications sont créées automatiquement quand les modules 2, 3 et 4 écrivent dans la base ; les documents médicaux sont des fichiers sur disque décrits dans PostgreSQL.
+**Objectif :** Informer chaque utilisateur de ce qui le concerne et centraliser les documents médicaux, dont les ordonnances, entre le patient et ses médecins.
+
+Les notifications sont créées automatiquement quand les modules 2, 3 et 4 écrivent dans la base. Les documents médicaux sont des fichiers sur disque décrits dans PostgreSQL ; toutes les ordonnances envoyées par un médecin y arrivent.
 
 #### Fonctionnalités
 
-**Notifications**
+**Notifications (tous)**
 
 - Boîte de réception : lu / non lu, archives, badge du nombre de non-lus
 - Notifications automatiques après les actions des modules Rendez-vous, Médicaments et Suivi santé
+- Notifications explicites de synchronisation : « Nouvelle ordonnance », « Nouveau traitement », « Document partagé »
 
 **Rappels**
 
 - Rappels personnels pour tous ; un médecin peut en créer pour ses patients suivis
 - Report, annulation ; l'administrateur relance les échecs et voit l'historique
 
-**Documents**
+**Patient · Documents**
 
 - Dépôt, lecture, téléchargement, favoris, classement (ordonnance, analyse, autre)
+- Ordonnances envoyées par ses médecins dans Documents → Ordonnances (accès direct depuis Médicaments → « Mes ordonnances »)
+- « Mes médecins » : ajout ou retrait d'un médecin de ses contacts de soin
 - Partage avec un médecin ou par lien QR protégé par un PIN, avec expiration et révocation
-- Lecture automatique d'un document, à confirmer avant enregistrement
+
+**Médecin · Documents**
+
+- Tous les documents de ses patients suivis, en lecture seule, filtrables par patient et par catégorie
+- « Envoyer une ordonnance » ou un autre document depuis le dossier du patient
 
 **Administrateur**
 
 - Envoi et gestion des notifications pour tous les utilisateurs
+
+#### Volet intelligent : analyse d'un document
+
+1. Sur un document, l'utilisateur lance « Analyser ».
+2. Un traitement en arrière-plan (toutes les 2 s) extrait le texte du fichier (PDF ou image).
+3. Le modèle local **llama3.2** (Ollama) propose un titre, une catégorie, la date, le médecin, l'établissement et un résumé ; le serveur ne garde que les valeurs réellement présentes dans le texte.
+4. Si le texte mentionne un rendez-vous de suivi, une date de rappel est proposée.
+5. L'utilisateur vérifie et confirme : le document est renommé et classé, et le rappel est créé. **Rien n'est appliqué sans sa confirmation.**
+
+| Autre fonction | Fonctionnement |
+|---|---|
+| Livraison des rappels | Tâche planifiée toutes les 15 s : les rappels échus deviennent des notifications |
+| Synchronisation des ordonnances | `PrescriptionDocumentSync` recopie chaque ordonnance du module Médicaments dans les documents du patient, et rattrape les anciennes au démarrage |
+
+#### Opérations CRUD
+
+| Donnée | Créer | Lire | Modifier | Supprimer |
+|---|---|---|---|---|
+| Notification | Serveur ; administrateur | Destinataire | Destinataire (lu, archivé) ; administrateur | Administrateur |
+| Rappel (`reminders`) | Utilisateur ; médecin pour ses patients ; administrateur | Destinataire, auteur | Auteur (report, annulation) | Auteur |
+| Document (`medical_documents`) | Patient ; médecin pour un patient suivi ; serveur (copie d'ordonnance) | Patient ; médecins qui le suivent (lecture seule) | Patient (titre, catégorie, favori) | Patient |
+| Lien de partage | Patient | Patient ; visiteur avec le lien et le PIN | Patient (révocation) | — |
+| Contact de soin (`patient_doctor`) | Patient ; médecin (avec accord) | Patient, médecin | — | Patient |
 
 #### Écrans, API et tables
 
 | Écran de l'app | Fichier Flutter | Routes API (`/api…`) | Backend | Tables |
 |---|---|---|---|---|
 | Notifications | `notifications_page.dart` | **GET** /notifications, /notifications/unread-count, /notifications/overview · **POST** /notifications/{id}/read, /archive, /read-all | NotificationController | `notifications` |
-| Rappels | `notifications_page.dart` | **GET** · **POST** /reminders · **PUT** /reminders/{id} · **POST** /reminders/{id}/cancel, /snooze, /retry | ReminderController | `reminders`, `reminder_change`, `notifications` |
-| Contacts de soin | `notifications_page.dart` | **GET** /notifications/care/contacts, /care/patients, /care/doctor | NotificationController | `patient_doctor`, `doctor_patient_assignments`, `appointment` |
-| Administration des notifications | `notification_admin_page.dart` | **GET** /notifications/admin, /admin/recipients, /deliveries · **POST** /notifications/admin | NotificationController (ADMIN) | `notifications`, `users` |
-| Documents médicaux | `documents_page.dart · document_preview_page.dart` | **GET** /documents, /documents/overview, /documents/{id}/content · **POST** /documents · **PUT** /documents/{id}/favorite, /doctor · **DELETE** | DocumentController | `medical_documents` |
-| Partage par lien | `document_shares_page.dart` | **POST** /documents/{id}/shares · **POST** …/shares/{id}/revoke · **GET** …/shares/{id}/accesses · page publique /share/document | DocumentShareController, SharedDocumentController | `document_shares`, `document_share_accesses` |
-| Analyse d'un document | `document_analysis_page.dart` | **POST** /documents/{id}/analysis · **POST** /documents/{id}/analysis/confirm | DocumentAnalysisController + worker toutes les 2 s | `document_analyses` |
+| Rappels | `notifications_page.dart · reminder_form.dart` | **GET** · **POST** /reminders · **PUT** /reminders/{id} · **POST** /reminders/{id}/cancel, /snooze, /retry | ReminderController | `reminders`, `reminder_change`, `notifications` |
+| Mes médecins / patients | `care_contacts.dart` | **GET** /notifications/care/contacts · **PUT** /notifications/care/patients, /care/doctor · **DELETE** /care/doctor | CareRelationshipController | `patient_doctor` |
+| Administration des notifications | `notification_admin_page.dart` | **GET** /notifications/admin, /admin/recipients · **POST** · **PUT** · **DELETE** /notifications/admin/{id} | NotificationAdminController (ADMIN) | `notifications`, `users` |
+| Documents médicaux | `documents_page.dart · document_preview_page.dart` | **GET** /documents (`?patientId=`, `?category=`), /documents/overview, /documents/{id}/content · **POST** /documents · **PUT** /documents/{id}, /doctor · **PATCH** /favorite · **DELETE** | DocumentController | `medical_documents` |
+| Documents du patient (médecin) | `patient_file_page.dart` | **GET** /documents?patientId= · **POST** /documents (avec `patientId`) | DocumentController | `medical_documents` |
+| Partage par lien | `document_shares_page.dart` | **POST** /documents/{id}/shares · **PATCH** …/shares/{id}/revoke · page publique /share/document | DocumentShareController, SharedDocumentController | `document_shares`, `document_share_accesses` |
+| Analyse d'un document | `document_analysis_page.dart` | **POST** /documents/{id}/analysis · **POST** /documents/{id}/analysis/confirm | DocumentAnalysisController + worker | `document_analyses`, `reminders` |
 
 #### Données
 
@@ -800,27 +988,35 @@ erDiagram
 - `users 1 ─ N` : notifications, reminders : ce que reçoit chaque utilisateur
 - `medical_documents 1 ─ N` : document_shares 1 ─ N document_share_accesses
 - `medical_documents 1 ─ 1` : document_analyses (document_id UNIQUE)
+- `prescription.document_id → medical_documents` : chaque ordonnance du module 3 a sa copie dans les documents du patient
 - `modules 2, 3, 4 → notifications` : un intercepteur ajoute une notification après chaque écriture réussie
 
 #### Une action de bout en bout
 
-1. **Téléphone** : Documents médicaux → déposer une photo d'analyse sanguine.
-2. **Wi-Fi** : `POST /api/documents` (multipart, 10 Mo maximum).
-3. **API** : `DocumentStorageService` écrit le fichier dans `backend/storage/documents`.
-4. **PostgreSQL** : `INSERT medical_documents` avec `storage_key`, taille et catégorie ; le fichier lui-même n'est pas dans la base.
-5. **Retour** : Le document apparaît dans la liste ; il peut être partagé avec un médecin ou par lien.
+Parcours vérifié sur la vraie base (données de test supprimées ensuite) :
+
+1. **Médecin** : « Envoyer une ordonnance et préparer le planning » → Amine Trabelsi → photo de l'ordonnance → Envoyer.
+2. **API** : `POST /api/prescriptions/upload` enregistre l'ordonnance, puis `PrescriptionDocumentSync` écrit le fichier dans `backend/storage/documents`.
+3. **PostgreSQL** : `INSERT prescription`, `INSERT medical_documents (category='PRESCRIPTION', user_id=7, shared_doctor_id=1)`, `UPDATE prescription.document_id`, `INSERT notifications ('Nouvelle ordonnance')`.
+4. **Patient** : Amine voit « Ordonnance du 20/11/2026 – Dr Ahmed » dans Documents → Ordonnances (ou Médicaments → Mes ordonnances).
+5. **Médecin** : l'ordonnance apparaît dans l'onglet Documents du dossier d'Amine.
 
 #### Règles métier
 
-- **Notifications automatiques** : Après une écriture réussie sur rendez-vous, médicaments, ordonnances, mesures de santé ou documents, une ligne est ajoutée dans `notifications`. Si cela échoue, l'action d'origine réussit quand même.
-- **Rappels livrés par une tâche** : Toutes les 15 s, les `reminders` PENDING dont `scheduled_for` est passé sont livrés : ils passent à SENT et créent une notification.
-- **Fichiers hors base** : Les documents sont sur disque (`storage_key`). Sauvegarder PostgreSQL ne suffit pas : il faut aussi copier `backend/storage/documents`.
-- **Lien protégé** : Un lien de partage a un jeton et un code PIN hachés, une date d'expiration, peut être révoqué, et chaque ouverture est notée dans `document_share_accesses`.
+- **Notifications automatiques** : après une écriture réussie sur rendez-vous, médicaments, ordonnances, mesures de santé ou documents, une ligne est ajoutée dans `notifications`. Si cela échoue, l'action d'origine réussit quand même.
+- **Documents du patient** : le patient est le seul à modifier ou supprimer ses documents ; ses médecins les lisent seulement. Retirer un médecin de « Mes médecins » supprime ce lien ; il ne garde l'accès que s'il suit encore le patient par un traitement ou un rendez-vous.
+- **Fichiers hors base** : les documents sont sur disque (`storage_key`). Sauvegarder PostgreSQL ne suffit pas : il faut aussi copier `backend/storage/documents`.
+- **Lien protégé** : un lien de partage a un jeton et un code PIN hachés, une date d'expiration, peut être révoqué, et chaque ouverture est notée dans `document_share_accesses`.
+
+#### Synchronisation avec les autres modules
+
+- **M3 Médicaments** : chaque ordonnance est recopiée dans les documents du patient (`prescription.document_id`).
+- **M2, M3, M4** : leurs écritures produisent les notifications du patient.
+- **« Mes médecins »** : le lien `patient_doctor` compte dans la règle commune de suivi (accès au dossier patient).
 
 #### Notions du cours utilisées dans ce module
 
-`NavigationBar` (barre de navigation inférieure, `care_workspace.dart`), `Navigator.pushReplacement()`, `FutureBuilder`, `Form` + `TextFormField`, `Card`, `InkWell`, `Image.memory` (aperçu), `Uri.parse` (lien de partage).
-
+`NavigationBar` (barre de navigation inférieure, `care_workspace.dart`), `Navigator.pushReplacement()`, `FutureBuilder`, `Form` + `TextFormField`, `Card`, `InkWell`, `ChoiceChip` (filtre par catégorie), `Image.memory` (aperçu), `Uri.parse` (lien de partage).
 
 ---
 
@@ -874,10 +1070,10 @@ Vérification faite dans le code Flutter (`frontend/lib`) pour chaque notion des
 | `Navigator.pushReplacement()` | Oui | `documents_page.dart`, `notifications_page.dart` |
 | Routes nommées (`routes: {}` + `pushNamed`) | Oui | `main.dart` déclare `/login`, `/register`, `/home`, `/profile`, `/security`… ; `pushNamed` dans `login_page.dart`, `home_page.dart` |
 | `pushReplacementNamed()` | Non | |
-| Passage de paramètres à une page | Oui | Par le constructeur de la page (`MealFormPage(meal: …)`, `MedicationFormPage(…)`) ; les `arguments` de `pushNamed` ne sont pas utilisés |
+| Passage de paramètres à une page | Oui | Par le constructeur de la page (`MealFormPage(meal: …)`, `MedicationFormPage(patientId: …)`, `PatientFilePage(initialTab: …)`) ; les `arguments` de `pushNamed` ne sont pas utilisés |
 | `Drawer` | Non | |
 | `BottomNavigationBar` | Oui | Sous sa forme Material 3 `NavigationBar`, dans `core/widgets/care_workspace.dart` (modules Notifications et Documents) |
-| `TabBar` | Oui | `health_page.dart` (Tableau de bord, Mesures, Nutrition) et `security_page.dart` |
+| `TabBar` | Oui | `health_page.dart` (Tableau de bord, Mesures, Nutrition), `patient_file_page.dart` (dossier patient : Santé, Médicaments, Documents) et `security_page.dart` |
 
 ### Chapitre 5 · HTTP (`S05 - HTTP.pptx`)
 
@@ -905,13 +1101,163 @@ Vérification faite dans le code Flutter (`frontend/lib`) pour chaque notion des
 
 ---
 
-## 4. Lancer l'application
+---
 
-| Mode | Commande | Base |
+## 4. Compiler et lancer l'application
+
+Deux méthodes : **A · en local** sur le PC (application dans le navigateur) et **B · sur l'appareil physique** Android (CRT NX1) en Wi-Fi. Les deux utilisent le même backend et la même base PostgreSQL. Toutes les commandes sont pour **PowerShell** ; chaque processus long (backend, application) tourne dans sa propre fenêtre.
+
+### 4.1 Prérequis (une seule fois)
+
+| Outil | Version | Vérification |
 |---|---|---|
-| Démo locale | `mvn spring-boot:run "-Dspring-boot.run.profiles=dev"` dans `backend` | H2 (`backend/data/medicare`) |
-| PostgreSQL + Wi-Fi | `powershell -NoProfile -ExecutionPolicy Bypass -File .\backend\start-dev-postgres.ps1` | PostgreSQL `app_medicare` |
-| Application Android | `flutter build apk --release --dart-define=API_BASE_URL=http://192.168.1.199:8082/api` puis installation par câble une seule fois | — |
-| Application web | `flutter run -d chrome` dans `frontend` | — |
+| JDK | 21 (`C:\Users\OUERFELLI\.jdks\ms-21.0.9`) | `java -version` |
+| Maven | 3.6 ou plus | `mvn -v` |
+| Flutter | SDK stable avec Dart 3 | `flutter doctor` |
+| PostgreSQL | 18, service `postgresql-x64-18` | `Get-Service postgresql-x64-18` |
+| Ollama (IA, facultatif) | modèles `llama3.2` et `llava` | `ollama list` |
+| Android (méthode B) | Android SDK et `adb`, débogage USB activé sur le téléphone | `adb devices` |
 
-Comptes de démonstration (profil `dev`) : `patient@medicare.com` / `Patient@2026`, `dr.ahmed@medicare.com` / `Doctor@2026`, `admin@medicare.com` / `Admin@2026`, et les autres listés dans `README.md`.
+Préparation :
+
+```powershell
+# Base de données (si elle n'existe pas encore) : Hibernate crée ensuite les 29 tables au premier lancement
+& "C:\Program Files\PostgreSQL\18\bin\psql.exe" -U postgres -c "CREATE DATABASE app_medicare;"
+
+# Modèles d'IA locale (facultatif : sans Ollama, les écrans IA passent en mode démonstration)
+ollama pull llama3.2
+ollama pull llava
+
+# Dépendances de l'application
+cd C:\Users\OUERFELLI\Desktop\Dev_Mobile-main\frontend
+flutter pub get
+```
+
+### 4.2 Étape commune : lancer le backend
+
+```powershell
+# Fenêtre 1 : laisser ouverte
+Start-Service postgresql-x64-18          # si le service est arrêté (PowerShell administrateur)
+cd C:\Users\OUERFELLI\Desktop\Dev_Mobile-main
+$env:DB_PASSWORD = "<mot-de-passe-postgres>"   # à remplacer ; ne jamais l'écrire dans un fichier du dépôt
+powershell -NoProfile -ExecutionPolicy Bypass -File .\backend\start-dev-postgres.ps1
+```
+
+Attendre la ligne `Started MediCareApplication`. L'API répond alors sur `http://localhost:8082/api` (et sur `http://<IP-du-PC>:8082/api` depuis le Wi-Fi). Au premier démarrage, le profil `dev` crée les comptes de démonstration ; les ordonnances déjà enregistrées sont recopiées dans les documents des patients.
+
+Vérification :
+
+```powershell
+Invoke-WebRequest -UseBasicParsing http://localhost:8082/api/health | Select-Object StatusCode   # 200
+```
+
+Autre mode, sans PostgreSQL (base H2 de démonstration) :
+
+```powershell
+cd C:\Users\OUERFELLI\Desktop\Dev_Mobile-main\backend
+mvn spring-boot:run "-Dspring-boot.run.profiles=dev"
+```
+
+### 4.3 Méthode A · en local (navigateur)
+
+**Développement, avec rechargement à chaud :**
+
+```powershell
+# Fenêtre 2
+cd C:\Users\OUERFELLI\Desktop\Dev_Mobile-main\frontend
+flutter run -d chrome --web-port 5180 --dart-define=API_BASE_URL=http://localhost:8082/api
+```
+
+Chrome s'ouvre sur l'application. Dans la fenêtre : `r` recharge après une modification, `q` arrête. Fermer la fenêtre Chrome arrête aussi l'application.
+
+**Version finale (stable, indépendante d'une fenêtre Chrome) :**
+
+```powershell
+# Fenêtre 2
+cd C:\Users\OUERFELLI\Desktop\Dev_Mobile-main\frontend
+flutter build web --release --pwa-strategy=none --dart-define=API_BASE_URL=http://localhost:8082/api
+cd build\web
+python -m http.server 5180
+```
+
+Ouvrir `http://localhost:5180` puis **Ctrl+F5** pour charger la dernière version. `--pwa-strategy=none` évite que le navigateur garde une ancienne version en cache.
+
+### 4.4 Méthode B · sur l'appareil physique (CRT NX1, en Wi-Fi)
+
+Le câble USB ne sert qu'à l'installation ; ensuite l'application parle au backend par le Wi-Fi.
+
+1. **Même réseau** : brancher le PC et le téléphone sur le même Wi-Fi.
+2. **Adresse du PC** :
+   ```powershell
+   (Get-NetIPAddress -AddressFamily IPv4 -InterfaceAlias Wi-Fi*).IPAddress     # ex. 192.168.1.199
+   ```
+3. **Autoriser cette adresse** dans `frontend\android\app\src\main\res\xml\network_security_config.xml` (Android refuse le HTTP non chiffré vers une adresse non listée) :
+   ```xml
+   <domain includeSubdomains="false">192.168.1.199</domain>
+   ```
+4. **Ouvrir le port 8082 dans le pare-feu Windows** (une seule fois, PowerShell administrateur) :
+   ```powershell
+   New-NetFirewallRule -DisplayName "MediCare API 8082" -Direction Inbound -Protocol TCP -LocalPort 8082 -Action Allow
+   ```
+5. **Backend lancé** (étape 4.2).
+6. **Brancher le téléphone en USB**, accepter « Autoriser le débogage USB », puis vérifier :
+   ```powershell
+   adb devices        # AYAV6R3B27000131   device
+   ```
+7. **Compiler l'APK avec l'adresse du PC** :
+   ```powershell
+   cd C:\Users\OUERFELLI\Desktop\Dev_Mobile-main\frontend
+   flutter build apk --release --dart-define=API_BASE_URL=http://192.168.1.199:8082/api
+   ```
+8. **Installer et lancer** :
+   ```powershell
+   adb install -r build\app\outputs\flutter-apk\app-release.apk
+   adb shell am start -n com.example.medicare/.MainActivity
+   ```
+9. **Vérifier que le téléphone joint le serveur** :
+   ```powershell
+   adb shell "toybox nc -z -w 3 192.168.1.199 8082 && echo OK || echo ECHEC"
+   ```
+10. **Débrancher le câble** : l'application fonctionne en Wi-Fi ; chaque action est enregistrée dans PostgreSQL `app_medicare`.
+
+Variante de développement sur le téléphone (rechargement à chaud, câble branché) :
+
+```powershell
+flutter run -d AYAV6R3B27000131 --dart-define=API_BASE_URL=http://192.168.1.199:8082/api
+```
+
+Si le PC change de réseau Wi-Fi, refaire les étapes 2, 3, 7 et 8 : l'adresse est intégrée à l'APK.
+
+### 4.5 Tests automatisés
+
+```powershell
+cd C:\Users\OUERFELLI\Desktop\Dev_Mobile-main\backend
+$env:JAVA_HOME = "$env:USERPROFILE\.jdks\ms-21.0.9"
+mvn test                       # 80 tests (sécurité, rendez-vous, médicaments, documents, notifications, synchronisation)
+
+cd ..\frontend
+flutter analyze
+flutter test                   # 61 tests (écrans, sessions, rôles, dossier patient, synchronisation)
+```
+
+### 4.6 Arrêter et dépanner
+
+| Problème | Solution |
+|---|---|
+| Arrêter | `Ctrl+C` dans chaque fenêtre |
+| « Port 8082 already in use » | `Get-NetTCPConnection -LocalPort 8082 -State Listen \| % { Stop-Process -Id $_.OwningProcess -Force }` |
+| L'application web montre une ancienne version | Recompiler avec `--pwa-strategy=none`, puis Ctrl+F5 |
+| Le téléphone affiche une erreur de connexion | Même Wi-Fi ? Adresse dans `network_security_config.xml` ? Pare-feu ouvert ? APK compilé avec la bonne adresse ? |
+| Les écrans IA répondent « mode démonstration » | Lancer Ollama (`ollama serve`) et vérifier `ollama list` |
+| Repartir de zéro | `mvn clean` dans `backend`, `flutter clean` puis `flutter pub get` dans `frontend` |
+
+### 4.7 Comptes de démonstration (profil `dev`)
+
+| Rôle | Email | Mot de passe |
+|---|---|---|
+| Médecin | `dr.ahmed@medicare.com` | `Doctor@2026` |
+| Patient (Amine Trabelsi) | `patient2@medicare.com` | `Patient@2026` |
+| Patient Test | `patient@medicare.com` | `Patient@2026` |
+| Administrateur | `admin@medicare.com` | `Admin@2026` |
+
+Les autres comptes (secrétaires, autres médecins et patients) sont listés dans `README.md`.

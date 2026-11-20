@@ -46,6 +46,9 @@ public class Prescription {
     @Column(nullable = false, columnDefinition = "boolean default false not null")
     private boolean archived = false;
 
+    /** Copie de l'ordonnance dans les documents du patient (module Documents) ; null tant qu'elle n'est pas faite. */
+    private Long documentId;
+
     @OneToMany(mappedBy = "prescription")
     @Builder.Default
     private List<Medication> medications = new ArrayList<>();

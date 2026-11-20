@@ -40,6 +40,13 @@ public class DocumentService {
     @Transactional(readOnly = true)
     public List<DocumentDtos.DocumentResponse> list(Authentication authentication, DocumentCategory category,
             String q, Boolean favorite, String sort) {
+        return list(authentication, category, q, favorite, sort, null);
+    }
+
+    /** Avec patientId : documents d'un seul patient (dossier patient côté médecin). */
+    @Transactional(readOnly = true)
+    public List<DocumentDtos.DocumentResponse> list(Authentication authentication, DocumentCategory category,
+            String q, Boolean favorite, String sort, Long patientId) {
         User viewer = currentUser(authentication);
         Sort order = switch (sort) {
             case "recent" -> Sort.by(Sort.Order.desc("uploadedAt"), Sort.Order.desc("id"));
@@ -51,6 +58,7 @@ public class DocumentService {
         List<MedicalDocument> result = documents.findAll((root, query, cb) -> {
             var predicates = new ArrayList<Predicate>();
             predicates.add(access.visible(viewer).toPredicate(root,query,cb));
+            if (patientId != null) predicates.add(cb.equal(root.get("user").get("id"), patientId));
             if (category != null) predicates.add(cb.equal(root.get("category"), category));
             if (favorite != null) predicates.add(cb.equal(root.get("favorite"), favorite));
             if (q != null && !q.isBlank()) {

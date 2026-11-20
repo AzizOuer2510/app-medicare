@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -11,12 +12,18 @@ class MedicationFormPage extends ConsumerStatefulWidget {
   final PrescriptionMedicationSuggestion? suggestion;
   final bool draftOnly;
 
+  /// Médecin : patient pour qui le planning est créé (sans passer par une ordonnance déposée).
+  final int? patientId;
+  final String? patientName;
+
   const MedicationFormPage({
     super.key,
     this.medication,
     this.prescriptionId,
     this.suggestion,
     this.draftOnly = false,
+    this.patientId,
+    this.patientName,
   });
 
   @override
@@ -52,6 +59,7 @@ class _MedicationFormPageState extends ConsumerState<MedicationFormPage> {
       widget.prescriptionId != null || widget.draftOnly;
   bool get _prescriptionLinked =>
       widget.prescriptionId != null ||
+      widget.patientId != null ||
       widget.draftOnly ||
       widget.medication?.prescriptionId != null;
   bool get _ocrReview => widget.suggestion != null;
@@ -277,6 +285,8 @@ class _MedicationFormPageState extends ConsumerState<MedicationFormPage> {
         'endDate': _endDate?.toIso8601String().split('T').first,
         'reminderTimes': _times.map(_apiTime).toList(),
         'prescriptionId': m?.prescriptionId ?? widget.prescriptionId,
+        if (m == null && widget.prescriptionId == null && widget.patientId != null)
+          'patientId': widget.patientId,
         'pharmaceuticalForm': _form,
         'notes': _notes.text.trim().isEmpty ? null : _notes.text.trim(),
         'unitsPerDose': _number(_unitsPerDose),
@@ -324,6 +334,12 @@ class _MedicationFormPageState extends ConsumerState<MedicationFormPage> {
         // A platform notification failure must not undo the saved medication.
       }
       if (mounted) Navigator.pop(context, true);
+    } on DioException catch (error) {
+      final data = error.response?.data;
+      final detail = data is Map ? data['message']?.toString() : null;
+      _message(detail == null || detail.isEmpty
+          ? 'Impossible d’enregistrer le médicament. Vérifiez la connexion au serveur.'
+          : 'Impossible d’enregistrer le médicament : $detail');
     } catch (_) {
       _message('Impossible d’enregistrer le médicament.');
     } finally {
@@ -364,7 +380,9 @@ class _MedicationFormPageState extends ConsumerState<MedicationFormPage> {
                   ? 'Médicament de l’ordonnance'
                   : editing
                       ? 'Modifier le médicament'
-                      : 'Ajouter un médicament',
+                      : widget.patientName != null
+                          ? 'Planning de ${widget.patientName}'
+                          : 'Ajouter un médicament',
         ),
       ),
       body: Form(
@@ -372,6 +390,18 @@ class _MedicationFormPageState extends ConsumerState<MedicationFormPage> {
         child: ListView(
           padding: const EdgeInsets.all(20),
           children: [
+            if (widget.patientName != null && !editing) ...[
+              Card(
+                color: Theme.of(context).colorScheme.primaryContainer,
+                child: ListTile(
+                  leading: const Icon(Icons.person_outline),
+                  title: Text('Patient : ${widget.patientName}'),
+                  subtitle: const Text(
+                      'Le médicament et ses horaires de prise seront ajoutés au planning du patient.'),
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
             if (_fromPrescription) ...[
               const Text(
                 'Saisissez les informations exactement comme elles figurent sur l’ordonnance déposée.',
@@ -387,7 +417,7 @@ class _MedicationFormPageState extends ConsumerState<MedicationFormPage> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const Text(
-                        'Préremplissage OCR local — vérification obligatoire',
+                        'Planning prérempli depuis l’ordonnance — vérification obligatoire',
                         style: TextStyle(fontWeight: FontWeight.w700),
                       ),
                       const SizedBox(height: 4),

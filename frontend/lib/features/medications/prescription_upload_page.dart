@@ -11,10 +11,7 @@ import 'medication.dart';
 import 'medication_form_page.dart';
 
 class PrescriptionUploadPage extends ConsumerStatefulWidget {
-  const PrescriptionUploadPage({
-    super.key,
-    this.existingPrescription,
-  });
+  const PrescriptionUploadPage({super.key, this.existingPrescription});
 
   final Prescription? existingPrescription;
 
@@ -48,9 +45,9 @@ class _PrescriptionUploadPageState
   final Set<int> _savedDraftIndexes = {};
 
   List<MedicationDraft> get _draftMedications => [
-        ..._suggestionDrafts.whereType<MedicationDraft>(),
-        ..._manualDrafts,
-      ];
+    ..._suggestionDrafts.whereType<MedicationDraft>(),
+    ..._manualDrafts,
+  ];
 
   bool get _allSuggestionsReviewed =>
       _suggestionDrafts.every((draft) => draft != null);
@@ -58,7 +55,6 @@ class _PrescriptionUploadPageState
   bool get _canSendPrescription =>
       _selectedPatient != null &&
       _file != null &&
-      _ocrCompleted &&
       _allSuggestionsReviewed &&
       !_uploading &&
       _uploadedPrescriptionId == null;
@@ -106,7 +102,8 @@ class _PrescriptionUploadPageState
       setState(() {
         _patients = data
             .map(
-                (item) => _PatientOption.fromJson(item as Map<String, dynamic>))
+              (item) => _PatientOption.fromJson(item as Map<String, dynamic>),
+            )
             .toList();
         _searching = false;
       });
@@ -168,10 +165,10 @@ class _PrescriptionUploadPageState
         'patientId': patient.id.toString(),
         'file': MultipartFile.fromBytes(file!.bytes!, filename: file.name),
       });
-      final response = await ref.read(apiClientProvider).dio.post(
-            '/prescriptions/upload',
-            data: form,
-          );
+      final response = await ref
+          .read(apiClientProvider)
+          .dio
+          .post('/prescriptions/upload', data: form);
       final payload = response.data;
       if (payload is! Map<String, dynamic> || payload['id'] is! num) {
         if (!mounted) return;
@@ -250,7 +247,7 @@ class _PrescriptionUploadPageState
             );
       final payload = response.data;
       if (payload is! Map) {
-        throw const FormatException('Réponse OCR invalide.');
+        throw const FormatException('Réponse du préremplissage invalide.');
       }
       final medications = payload['medications'];
       if (medications is! List) {
@@ -279,7 +276,7 @@ class _PrescriptionUploadPageState
       if (!mounted) return;
       setState(() {
         _extracting = false;
-        _error = _apiError(error, 'L’analyse locale de l’ordonnance a échoué.');
+        _error = _apiError(error, 'Le préremplissage du planning a échoué.');
       });
     } on FormatException catch (error) {
       if (!mounted) return;
@@ -291,7 +288,7 @@ class _PrescriptionUploadPageState
   }
 
   Future<void> _reviewSuggestion(int index) async {
-    if (widget.existingPrescription == null) {
+    if (_uploadedPrescriptionId == null) {
       final draft = await Navigator.push<MedicationDraft>(
         context,
         MaterialPageRoute(
@@ -346,7 +343,8 @@ class _PrescriptionUploadPageState
         if (!mounted) return;
         setState(() {
           _uploading = false;
-          _error = 'Ordonnance envoyée au patient, mais le planning est '
+          _error =
+              'Ordonnance envoyée au patient, mais le planning est '
               'incomplet. Réessayez l’enregistrement du planning. '
               '${_apiError(error, 'Échec de l’enregistrement du médicament.')}';
         });
@@ -387,459 +385,524 @@ class _PrescriptionUploadPageState
     final existingMedicationCount =
         widget.existingPrescription?.medicationIds.length ?? 0;
     final totalMedications = existingMedicationCount + _medicationsAdded;
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.existingPrescription == null
-            ? 'Nouvelle ordonnance'
-            : 'Planning de l’ordonnance'),
-      ),
-      body: ListView(
-        padding: const EdgeInsets.all(20),
-        children: [
-          if (widget.existingPrescription == null) ...[
-            Text(
-              'Choisir un patient',
-              style: theme.textTheme.titleLarge?.copyWith(
-                fontWeight: FontWeight.w600,
+    final unsent =
+        widget.existingPrescription == null &&
+        _uploadedPrescriptionId == null &&
+        (_file != null || _draftMedications.isNotEmpty);
+    return PopScope(
+      canPop: !unsent,
+      onPopInvokedWithResult: (didPop, _) async {
+        if (didPop) return;
+        final leave = await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('Ordonnance non envoyée'),
+            content: const Text(
+              'L’ordonnance et le planning ne sont pas encore envoyés au patient. '
+              'Si vous quittez, rien ne sera enregistré.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Rester'),
               ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Recherchez son nom complet. Seuls les patients disponibles pour votre suivi apparaissent.',
-              style: theme.textTheme.bodyMedium,
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: _searchController,
-              onChanged:
-                  _uploadedPrescriptionId == null ? _searchChanged : null,
-              textInputAction: TextInputAction.search,
-              decoration: InputDecoration(
-                labelText: 'Nom complet du patient',
-                hintText: 'Ex. Amel Ben Salem',
-                prefixIcon: const Icon(Icons.search),
-                suffixIcon: _searching
-                    ? const Padding(
-                        padding: EdgeInsets.all(14),
-                        child: SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                      )
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('Quitter sans envoyer'),
+              ),
+            ],
+          ),
+        );
+        if (leave == true && context.mounted) Navigator.pop(context);
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(
+            widget.existingPrescription == null
+                ? 'Nouvelle ordonnance'
+                : 'Planning de l’ordonnance',
+          ),
+        ),
+        body: ListView(
+          padding: const EdgeInsets.all(20),
+          children: [
+            if (widget.existingPrescription == null) ...[
+              Text(
+                'Choisir un patient',
+                style: theme.textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Recherchez son nom complet. Seuls les patients disponibles pour votre suivi apparaissent.',
+                style: theme.textTheme.bodyMedium,
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: _searchController,
+                onChanged: _uploadedPrescriptionId == null
+                    ? _searchChanged
                     : null,
-                border: const OutlineInputBorder(),
+                textInputAction: TextInputAction.search,
+                decoration: InputDecoration(
+                  labelText: 'Nom complet du patient',
+                  hintText: 'Ex. Amel Ben Salem',
+                  prefixIcon: const Icon(Icons.search),
+                  suffixIcon: _searching
+                      ? const Padding(
+                          padding: EdgeInsets.all(14),
+                          child: SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        )
+                      : null,
+                  border: const OutlineInputBorder(),
+                ),
               ),
-            ),
-            if (_selectedPatient != null) ...[
-              const SizedBox(height: 12),
-              Card(
-                child: ListTile(
-                  leading:
-                      const CircleAvatar(child: Icon(Icons.person_outline)),
-                  title: Text(_selectedPatient!.fullName),
-                  subtitle: const Text('Patient sélectionné'),
-                  trailing: IconButton(
-                    tooltip: 'Changer de patient',
-                    onPressed: _uploadedPrescriptionId != null
-                        ? null
-                        : () => setState(() {
+              if (_selectedPatient != null) ...[
+                const SizedBox(height: 12),
+                Card(
+                  child: ListTile(
+                    leading: const CircleAvatar(
+                      child: Icon(Icons.person_outline),
+                    ),
+                    title: Text(_selectedPatient!.fullName),
+                    subtitle: const Text('Patient sélectionné'),
+                    trailing: IconButton(
+                      tooltip: 'Changer de patient',
+                      onPressed: _uploadedPrescriptionId != null
+                          ? null
+                          : () => setState(() {
                               _selectedPatient = null;
                               _patients = const [];
                               _searchController.clear();
                             }),
-                    icon: const Icon(Icons.close),
+                      icon: const Icon(Icons.close),
+                    ),
                   ),
                 ),
-              ),
-            ] else if (_patients.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Card(
-                clipBehavior: Clip.antiAlias,
-                child: Column(
-                  children: [
-                    for (final patient in _patients)
-                      ListTile(
-                        leading: const Icon(Icons.person_outline,
-                            color: Colors.teal),
-                        title: Text(patient.fullName),
-                        trailing: const Icon(Icons.chevron_right),
-                        onTap: () => setState(() {
-                          _selectedPatient = patient;
-                          _patients = const [];
-                          _searchController.text = patient.fullName;
-                        }),
-                      ),
-                  ],
-                ),
-              ),
-            ] else if (_searchController.text.trim().length >= 2 &&
-                !_searching &&
-                _error == null &&
-                _selectedPatient == null) ...[
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 12),
-                child: Text('Aucun patient disponible avec ce nom.'),
-              ),
-            ],
-            const SizedBox(height: 28),
-          ],
-          if (widget.existingPrescription == null) ...[
-            Text(
-              'Document de l’ordonnance',
-              style: theme.textTheme.titleLarge?.copyWith(
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'PDF, JPG ou PNG — 10 Mo maximum.',
-              style: theme.textTheme.bodyMedium,
-            ),
-            const SizedBox(height: 12),
-            OutlinedButton.icon(
-              onPressed: _uploading || _uploadedPrescriptionId != null
-                  ? null
-                  : _pickFile,
-              icon: const Icon(Icons.attach_file),
-              label: Text(
-                  _file == null ? 'Choisir un fichier' : 'Changer le fichier'),
-            ),
-            if (_file != null) ...[
-              const SizedBox(height: 8),
-              Card(
-                child: ListTile(
-                  leading: const Icon(Icons.description_outlined),
-                  title: Text(_file!.name,
-                      maxLines: 1, overflow: TextOverflow.ellipsis),
-                  subtitle: Text('${(_file!.size / 1024).ceil()} Ko'),
-                  trailing: IconButton(
-                    tooltip: 'Supprimer le fichier',
-                    onPressed:
-                        _uploading ? null : () => setState(() => _file = null),
-                    icon: const Icon(Icons.delete_outline),
+              ] else if (_patients.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Card(
+                  clipBehavior: Clip.antiAlias,
+                  child: Column(
+                    children: [
+                      for (final patient in _patients)
+                        ListTile(
+                          leading: const Icon(
+                            Icons.person_outline,
+                            color: Colors.teal,
+                          ),
+                          title: Text(patient.fullName),
+                          trailing: const Icon(Icons.chevron_right),
+                          onTap: () => setState(() {
+                            _selectedPatient = patient;
+                            _patients = const [];
+                            _searchController.text = patient.fullName;
+                          }),
+                        ),
+                    ],
                   ),
                 ),
-              ),
-            ],
-          ],
-          if (widget.existingPrescription == null &&
-              _uploadedPrescriptionId == null) ...[
-            const SizedBox(height: 16),
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Avant l’envoi au patient',
-                      style: TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                    const SizedBox(height: 8),
-                    const Text(
-                      'Analysez l’ordonnance, vérifiez les médicaments détectés '
-                      'et complétez leur planning. Le document ne sera envoyé '
-                      'qu’après cette étape.',
-                    ),
-                    const SizedBox(height: 12),
-                    FilledButton.tonalIcon(
-                      onPressed: _file == null || _extracting || _ocrCompleted
-                          ? null
-                          : _extractMedications,
-                      icon: _extracting
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.document_scanner_outlined),
-                      label: Text(
-                        _extracting
-                            ? 'Analyse locale en cours…'
-                            : _ocrCompleted
-                                ? 'Analyse terminée'
-                                : 'Préremplir les champs avec l’OCR local',
-                      ),
-                    ),
-                    if (_ocrNotice != null) ...[
-                      const SizedBox(height: 8),
-                      Text(_ocrNotice!),
-                    ],
-                    if (_suggestions.isNotEmpty) ...[
-                      const SizedBox(height: 12),
-                      Text(
-                        'Médicaments détectés — vérifiez chaque proposition',
-                        style: theme.textTheme.titleMedium
-                            ?.copyWith(fontWeight: FontWeight.w600),
-                      ),
-                      const SizedBox(height: 8),
-                      for (var index = 0; index < _suggestions.length; index++)
-                        Card(
-                          child: ListTile(
-                            leading: const Icon(Icons.medication_outlined),
-                            title: Text(
-                              _suggestions[index].name?.isNotEmpty == true
-                                  ? _suggestions[index].name!
-                                  : 'Médicament détecté',
-                            ),
-                            subtitle: Text(
-                              _suggestionDrafts[index] != null
-                                  ? 'Vérifié : ${_suggestionDrafts[index]!.dosage ?? 'dosage non renseigné'}'
-                                  : [
-                                      if (_suggestions[index]
-                                              .dosage
-                                              ?.isNotEmpty ==
-                                          true)
-                                        _suggestions[index].dosage!,
-                                      if (_suggestions[index]
-                                          .warnings
-                                          .isNotEmpty)
-                                        '${_suggestions[index].warnings.length} champ(s) à vérifier',
-                                      'Touchez pour vérifier et compléter',
-                                    ].join(' · '),
-                            ),
-                            trailing: Icon(
-                              _suggestionDrafts[index] == null
-                                  ? Icons.edit_outlined
-                                  : Icons.check_circle,
-                              color: _suggestionDrafts[index] == null
-                                  ? null
-                                  : Colors.teal,
-                            ),
-                            onTap: () => _reviewSuggestion(index),
-                          ),
-                        ),
-                    ],
-                    if (_ocrCompleted) ...[
-                      const SizedBox(height: 8),
-                      OutlinedButton.icon(
-                        onPressed: _addMedication,
-                        icon: const Icon(Icons.add),
-                        label: const Text(
-                          'Ajouter manuellement un médicament au planning',
-                        ),
-                      ),
-                      for (var index = 0; index < _manualDrafts.length; index++)
-                        Card(
-                          child: ListTile(
-                            leading: const Icon(Icons.medication_outlined),
-                            title: Text(_manualDrafts[index].name),
-                            subtitle: Text(
-                              _manualDrafts[index].dosage ??
-                                  'Dosage non renseigné',
-                            ),
-                            trailing: IconButton(
-                              tooltip: 'Supprimer du planning',
-                              onPressed: () =>
-                                  setState(() => _manualDrafts.removeAt(index)),
-                              icon: const Icon(Icons.delete_outline),
-                            ),
-                          ),
-                        ),
-                      if (!_allSuggestionsReviewed) ...[
-                        const SizedBox(height: 8),
-                        const Text(
-                          'Vérifiez chaque médicament détecté avant de pouvoir envoyer l’ordonnance.',
-                        ),
-                      ],
-                    ],
-                  ],
+              ] else if (_searchController.text.trim().length >= 2 &&
+                  !_searching &&
+                  _error == null &&
+                  _selectedPatient == null) ...[
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 12),
+                  child: Text('Aucun patient disponible avec ce nom.'),
                 ),
-              ),
-            ),
-          ],
-          if (widget.existingPrescription != null &&
-              _uploadedPrescriptionId != null) ...[
-            const SizedBox(height: 16),
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Row(
-                      children: [
-                        Icon(Icons.verified_outlined, color: Colors.teal),
-                        SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            'Ordonnance déposée',
-                            style: TextStyle(fontWeight: FontWeight.w700),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Patient : ${_uploadedPatientName ?? 'Patient'}',
-                    ),
-                    if (widget.existingPrescription?.documentName != null)
-                      Text(
-                        'Document : ${widget.existingPrescription!.documentName}',
-                      ),
-                    Text(
-                      totalMedications == 0
-                          ? 'Aucun médicament ajouté au planning.'
-                          : '$totalMedications médicament(s) lié(s) au planning.',
-                    ),
-                    if (existingMedicationCount > 0) ...[
-                      const SizedBox(height: 8),
-                      Text(
-                        '$existingMedicationCount médicament(s) sont déjà liés. Vérifiez le planning pour éviter les doublons.',
-                        style: TextStyle(color: theme.colorScheme.error),
-                      ),
-                    ],
-                    const SizedBox(height: 8),
-                    const Text(
-                      'L’OCR fonctionne localement. Aucun médicament n’est enregistré avant votre vérification et confirmation.',
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            FilledButton.tonalIcon(
-              onPressed: _extracting ? null : _extractMedications,
-              icon: _extracting
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.document_scanner_outlined),
-              label: Text(
-                _extracting
-                    ? 'Analyse locale en cours…'
-                    : 'Préremplir les champs avec l’OCR local',
-              ),
-            ),
-            if (_ocrNotice != null) ...[
-              const SizedBox(height: 8),
-              Text(_ocrNotice!),
+              ],
+              const SizedBox(height: 28),
             ],
-            if (_suggestions.isNotEmpty) ...[
-              const SizedBox(height: 16),
+            if (widget.existingPrescription == null) ...[
               Text(
-                'Médicaments détectés — vérifiez chaque proposition',
-                style: theme.textTheme.titleMedium
-                    ?.copyWith(fontWeight: FontWeight.w600),
+                'Document de l’ordonnance',
+                style: theme.textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
               ),
               const SizedBox(height: 8),
-              for (var index = 0; index < _suggestions.length; index++)
+              Text(
+                'PDF, JPG ou PNG — 10 Mo maximum.',
+                style: theme.textTheme.bodyMedium,
+              ),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                onPressed: _uploading || _uploadedPrescriptionId != null
+                    ? null
+                    : _pickFile,
+                icon: const Icon(Icons.attach_file),
+                label: Text(
+                  _file == null ? 'Choisir un fichier' : 'Changer le fichier',
+                ),
+              ),
+              if (_file != null) ...[
+                const SizedBox(height: 8),
                 Card(
                   child: ListTile(
-                    leading: const Icon(Icons.medication_outlined),
+                    leading: const Icon(Icons.description_outlined),
                     title: Text(
-                      _suggestions[index].name?.isNotEmpty == true
-                          ? _suggestions[index].name!
-                          : 'Médicament détecté',
+                      _file!.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
-                    subtitle: Text([
-                      if (_suggestions[index].dosage?.isNotEmpty == true)
-                        _suggestions[index].dosage!,
-                      if (_suggestions[index].warnings.isNotEmpty)
-                        '${_suggestions[index].warnings.length} champ(s) à vérifier',
-                    ].join(' · ')),
-                    trailing: _savedSuggestionIndexes.contains(index)
-                        ? const Icon(Icons.check_circle, color: Colors.teal)
-                        : const Icon(Icons.chevron_right),
-                    onTap: _savedSuggestionIndexes.contains(index)
-                        ? null
-                        : () => _reviewSuggestion(index),
+                    subtitle: Text('${(_file!.size / 1024).ceil()} Ko'),
+                    trailing: IconButton(
+                      tooltip: 'Supprimer le fichier',
+                      onPressed: _uploading
+                          ? null
+                          : () => setState(() => _file = null),
+                      icon: const Icon(Icons.delete_outline),
+                    ),
                   ),
                 ),
+              ],
             ],
-            const SizedBox(height: 12),
-            FilledButton.icon(
-              onPressed: _addMedication,
-              icon: const Icon(Icons.add),
-              label: const Text('Ajouter un médicament au planning'),
-            ),
-            OutlinedButton(
-              onPressed: _finish,
-              child: const Text('Terminer'),
-            ),
-          ],
-          if (widget.existingPrescription == null &&
-              _uploadedPrescriptionId != null) ...[
-            const SizedBox(height: 16),
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Row(
-                      children: [
-                        Icon(Icons.verified_outlined, color: Colors.teal),
-                        SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            'Ordonnance envoyée au patient',
-                            style: TextStyle(fontWeight: FontWeight.w700),
+            if (widget.existingPrescription == null &&
+                _uploadedPrescriptionId == null) ...[
+              const SizedBox(height: 16),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Avant l’envoi au patient',
+                        style: TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                      const SizedBox(height: 8),
+                      const Text(
+                        'Vous pouvez préremplir le planning à partir de l’ordonnance '
+                        'ou ajouter les médicaments vous-même, avant ou après l’envoi. '
+                        'À l’envoi, l’ordonnance arrive dans les documents du patient '
+                        'et les médicaments dans son planning de prises.',
+                      ),
+                      const SizedBox(height: 12),
+                      FilledButton.tonalIcon(
+                        onPressed: _file == null || _extracting || _ocrCompleted
+                            ? null
+                            : _extractMedications,
+                        icon: _extracting
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.document_scanner_outlined),
+                        label: Text(
+                          _extracting
+                              ? 'Préremplissage du planning en cours…'
+                              : _ocrCompleted
+                              ? 'Analyse terminée'
+                              : 'Préremplir le planning de votre patient',
+                        ),
+                      ),
+                      if (_ocrNotice != null) ...[
+                        const SizedBox(height: 8),
+                        Text(_ocrNotice!),
+                      ],
+                      if (_suggestions.isNotEmpty) ...[
+                        const SizedBox(height: 12),
+                        Text(
+                          'Médicaments détectés — vérifiez chaque proposition',
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        for (
+                          var index = 0;
+                          index < _suggestions.length;
+                          index++
+                        )
+                          Card(
+                            child: ListTile(
+                              leading: const Icon(Icons.medication_outlined),
+                              title: Text(
+                                _suggestions[index].name?.isNotEmpty == true
+                                    ? _suggestions[index].name!
+                                    : 'Médicament détecté',
+                              ),
+                              subtitle: Text(
+                                _suggestionDrafts[index] != null
+                                    ? 'Vérifié : ${_suggestionDrafts[index]!.dosage ?? 'dosage non renseigné'}'
+                                    : [
+                                        if (_suggestions[index]
+                                                .dosage
+                                                ?.isNotEmpty ==
+                                            true)
+                                          _suggestions[index].dosage!,
+                                        if (_suggestions[index]
+                                            .warnings
+                                            .isNotEmpty)
+                                          '${_suggestions[index].warnings.length} champ(s) à vérifier',
+                                        'Touchez pour vérifier et compléter',
+                                      ].join(' · '),
+                              ),
+                              trailing: Icon(
+                                _suggestionDrafts[index] == null
+                                    ? Icons.edit_outlined
+                                    : Icons.check_circle,
+                                color: _suggestionDrafts[index] == null
+                                    ? null
+                                    : Colors.teal,
+                              ),
+                              onTap: () => _reviewSuggestion(index),
+                            ),
+                          ),
+                      ],
+                      if (_file != null) ...[
+                        const SizedBox(height: 8),
+                        OutlinedButton.icon(
+                          onPressed: _addMedication,
+                          icon: const Icon(Icons.add),
+                          label: const Text(
+                            'Ajouter manuellement un médicament au planning',
+                          ),
+                        ),
+                        for (
+                          var index = 0;
+                          index < _manualDrafts.length;
+                          index++
+                        )
+                          Card(
+                            child: ListTile(
+                              leading: const Icon(Icons.medication_outlined),
+                              title: Text(_manualDrafts[index].name),
+                              subtitle: Text(
+                                _manualDrafts[index].dosage ??
+                                    'Dosage non renseigné',
+                              ),
+                              trailing: IconButton(
+                                tooltip: 'Supprimer du planning',
+                                onPressed: () => setState(
+                                  () => _manualDrafts.removeAt(index),
+                                ),
+                                icon: const Icon(Icons.delete_outline),
+                              ),
+                            ),
+                          ),
+                        if (!_allSuggestionsReviewed) ...[
+                          const SizedBox(height: 8),
+                          const Text(
+                            'Vérifiez chaque médicament détecté avant de pouvoir envoyer l’ordonnance.',
+                          ),
+                        ],
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ],
+            if (widget.existingPrescription != null &&
+                _uploadedPrescriptionId != null) ...[
+              const SizedBox(height: 16),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Row(
+                        children: [
+                          Icon(Icons.verified_outlined, color: Colors.teal),
+                          SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Ordonnance déposée',
+                              style: TextStyle(fontWeight: FontWeight.w700),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Text('Patient : ${_uploadedPatientName ?? 'Patient'}'),
+                      if (widget.existingPrescription?.documentName != null)
+                        Text(
+                          'Document : ${widget.existingPrescription!.documentName}',
+                        ),
+                      Text(
+                        totalMedications == 0
+                            ? 'Aucun médicament ajouté au planning.'
+                            : '$totalMedications médicament(s) lié(s) au planning.',
+                      ),
+                      if (existingMedicationCount > 0) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          '$existingMedicationCount médicament(s) sont déjà liés. Vérifiez le planning pour éviter les doublons.',
+                          style: TextStyle(color: theme.colorScheme.error),
+                        ),
+                      ],
+                      const SizedBox(height: 8),
+                      const Text(
+                        'Le planning est prérempli à partir de l’ordonnance. Aucun médicament n’est enregistré avant votre vérification et confirmation.',
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              FilledButton.tonalIcon(
+                onPressed: _extracting ? null : _extractMedications,
+                icon: _extracting
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.document_scanner_outlined),
+                label: Text(
+                  _extracting
+                      ? 'Préremplissage du planning en cours…'
+                      : 'Préremplir le planning de votre patient',
+                ),
+              ),
+              if (_ocrNotice != null) ...[
+                const SizedBox(height: 8),
+                Text(_ocrNotice!),
+              ],
+              if (_suggestions.isNotEmpty) ...[
+                const SizedBox(height: 16),
+                Text(
+                  'Médicaments détectés — vérifiez chaque proposition',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                for (var index = 0; index < _suggestions.length; index++)
+                  Card(
+                    child: ListTile(
+                      leading: const Icon(Icons.medication_outlined),
+                      title: Text(
+                        _suggestions[index].name?.isNotEmpty == true
+                            ? _suggestions[index].name!
+                            : 'Médicament détecté',
+                      ),
+                      subtitle: Text(
+                        [
+                          if (_suggestions[index].dosage?.isNotEmpty == true)
+                            _suggestions[index].dosage!,
+                          if (_suggestions[index].warnings.isNotEmpty)
+                            '${_suggestions[index].warnings.length} champ(s) à vérifier',
+                        ].join(' · '),
+                      ),
+                      trailing: _savedSuggestionIndexes.contains(index)
+                          ? const Icon(Icons.check_circle, color: Colors.teal)
+                          : const Icon(Icons.chevron_right),
+                      onTap: _savedSuggestionIndexes.contains(index)
+                          ? null
+                          : () => _reviewSuggestion(index),
+                    ),
+                  ),
+              ],
+              const SizedBox(height: 12),
+              FilledButton.icon(
+                onPressed: _addMedication,
+                icon: const Icon(Icons.add),
+                label: const Text('Ajouter un médicament au planning'),
+              ),
+              OutlinedButton(onPressed: _finish, child: const Text('Terminer')),
+            ],
+            if (widget.existingPrescription == null &&
+                _uploadedPrescriptionId != null) ...[
+              const SizedBox(height: 16),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Row(
+                        children: [
+                          Icon(Icons.verified_outlined, color: Colors.teal),
+                          SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Ordonnance envoyée au patient',
+                              style: TextStyle(fontWeight: FontWeight.w700),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Text('Patient : ${_uploadedPatientName ?? 'Patient'}'),
+                      const Text(
+                        'Elle est dans ses documents (Documents → Ordonnances).',
+                      ),
+                      Text(
+                        _sendCompleted
+                            ? '$_medicationsAdded médicament(s) dans son planning de prises.'
+                            : '${_savedDraftIndexes.length}/${_draftMedications.length} médicament(s) enregistré(s) dans le planning.',
+                      ),
+                      if (_uploading) ...[
+                        const SizedBox(height: 12),
+                        const LinearProgressIndicator(),
+                      ] else if (_sendCompleted) ...[
+                        const SizedBox(height: 12),
+                        FilledButton.icon(
+                          onPressed: _addMedication,
+                          icon: const Icon(Icons.add_alarm_outlined),
+                          label: const Text(
+                            'Ajouter un médicament à son planning',
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        OutlinedButton(
+                          onPressed: _finish,
+                          child: const Text('Terminer'),
+                        ),
+                      ] else ...[
+                        const SizedBox(height: 12),
+                        FilledButton.icon(
+                          onPressed: _retryDraftMedications,
+                          icon: const Icon(Icons.refresh),
+                          label: const Text(
+                            'Réessayer l’enregistrement du planning',
                           ),
                         ),
                       ],
-                    ),
-                    const SizedBox(height: 8),
-                    Text('Patient : ${_uploadedPatientName ?? 'Patient'}'),
-                    Text(
-                      _sendCompleted
-                          ? '${_draftMedications.length} médicament(s) confirmé(s) dans le planning.'
-                          : '${_savedDraftIndexes.length}/${_draftMedications.length} médicament(s) enregistré(s) dans le planning.',
-                    ),
-                    if (_uploading) ...[
-                      const SizedBox(height: 12),
-                      const LinearProgressIndicator(),
-                    ] else if (_sendCompleted) ...[
-                      const SizedBox(height: 12),
-                      OutlinedButton(
-                        onPressed: _finish,
-                        child: const Text('Terminer'),
-                      ),
-                    ] else ...[
-                      const SizedBox(height: 12),
-                      FilledButton.icon(
-                        onPressed: _retryDraftMedications,
-                        icon: const Icon(Icons.refresh),
-                        label: const Text(
-                          'Réessayer l’enregistrement du planning',
-                        ),
-                      ),
                     ],
-                  ],
+                  ),
                 ),
               ),
-            ),
-          ],
-          if (_error != null) ...[
-            const SizedBox(height: 12),
-            Text(
-              _error!,
-              style: TextStyle(color: theme.colorScheme.error),
-            ),
-          ],
-          const SizedBox(height: 24),
-          if (_uploadedPrescriptionId == null)
-            FilledButton.icon(
-              onPressed: _canSendPrescription ? _upload : null,
-              icon: _uploading
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.upload_file),
-              label: Text(
-                _uploading
-                    ? 'Envoi de l’ordonnance et du planning…'
-                    : _ocrCompleted && _allSuggestionsReviewed
-                        ? 'Envoyer l’ordonnance au patient'
-                        : 'Analyser et vérifier avant l’envoi',
+            ],
+            if (_error != null) ...[
+              const SizedBox(height: 12),
+              Text(_error!, style: TextStyle(color: theme.colorScheme.error)),
+            ],
+            const SizedBox(height: 24),
+            if (_uploadedPrescriptionId == null)
+              FilledButton.icon(
+                onPressed: _canSendPrescription ? _upload : null,
+                icon: _uploading
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.upload_file),
+                label: Text(
+                  _uploading
+                      ? 'Envoi de l’ordonnance et du planning…'
+                      : _selectedPatient == null || _file == null
+                      ? 'Choisissez le patient et le fichier'
+                      : !_allSuggestionsReviewed
+                      ? 'Vérifiez les médicaments détectés pour envoyer'
+                      : _draftMedications.isEmpty
+                      ? 'Envoyer l’ordonnance au patient'
+                      : 'Envoyer l’ordonnance et le planning (${_draftMedications.length})',
+                ),
               ),
-            ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -852,7 +915,7 @@ class _PatientOption {
   final String fullName;
 
   factory _PatientOption.fromJson(Map<String, dynamic> json) => _PatientOption(
-        id: (json['id'] as num).toInt(),
-        fullName: json['fullName'] as String? ?? '',
-      );
+    id: (json['id'] as num).toInt(),
+    fullName: json['fullName'] as String? ?? '',
+  );
 }

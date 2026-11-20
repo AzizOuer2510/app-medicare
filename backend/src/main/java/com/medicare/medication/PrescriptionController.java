@@ -35,6 +35,8 @@ public class PrescriptionController {
     private final UserRepository users;
     private final DoctorPatientAssignmentRepository assignments;
     private final PrescriptionOcrService ocrService;
+    private final com.medicare.health.HealthAccessService healthAccess;
+    private final com.medicare.document.service.PrescriptionDocumentSync documentSync;
 
     public record PrescriptionRequest(
             @NotNull Long patientId,
@@ -99,9 +101,8 @@ public class PrescriptionController {
         if (doctor.getRole() != Role.DOCTOR) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only a doctor can view followed patients");
         }
-        return assignments.findActiveByDoctorId(doctor.getId())
-                .stream()
-                .map(assignment -> assignment.getPatient())
+        // Même liste que les autres modules (traitement, rendez-vous ou « Mes médecins »).
+        return healthAccess.followedPatients(doctor).keySet().stream()
                 .map(patient -> new PatientOption(patient.getId(), patient.getFullName()))
                 .toList();
     }
@@ -224,7 +225,9 @@ public class PrescriptionController {
             prescription.setDocumentContentType(
                     detectDocumentType(file.getOriginalFilename(), data));
         }
-        return PrescriptionResponse.from(prescriptions.save(prescription));
+        Prescription saved = prescriptions.save(prescription);
+        if (file != null && !file.isEmpty()) documentSync.sync(saved);
+        return PrescriptionResponse.from(saved);
     }
 
     @DeleteMapping("/{id}")
@@ -290,6 +293,8 @@ public class PrescriptionController {
                             .active(true)
                             .build()));
         }
+        // L'ordonnance arrive aussi dans les documents du patient (synchronisation médecin ↔ patient).
+        documentSync.sync(saved);
         return PrescriptionResponse.from(saved);
     }
 
@@ -367,7 +372,8 @@ public class PrescriptionController {
                 || patient.getMergedIntoId() != null || patient.isPasswordResetRequired()) {
             return false;
         }
-        if (assignments.existsByDoctorIdAndPatientId(doctor.getId(), patient.getId())) {
+        if (assignments.existsByDoctorIdAndPatientId(doctor.getId(), patient.getId())
+                || healthAccess.follows(doctor, patient)) {
             return true;
         }
         return !assignments.existsByPatientId(patient.getId());
