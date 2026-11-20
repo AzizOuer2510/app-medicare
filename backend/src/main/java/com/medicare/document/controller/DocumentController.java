@@ -23,8 +23,9 @@ public class DocumentController {
             @RequestParam(required = false) DocumentCategory category,
             @RequestParam(required = false) String q,
             @RequestParam(required = false) Boolean favorite,
-            @RequestParam(defaultValue = "recent") String sort) {
-        return service.list(authentication, category, q, favorite, sort);
+            @RequestParam(defaultValue = "recent") String sort,
+            @RequestParam(required = false) Long patientId) {
+        return service.list(authentication, category, q, favorite, sort, patientId);
     }
 
     @GetMapping("/{id}")

@@ -4,6 +4,7 @@ import com.medicare.appointment.AppointmentRepository;
 import com.medicare.appointment.AppointmentStatus;
 import com.medicare.common.ApiException;
 import com.medicare.medication.DoctorPatientAssignmentRepository;
+import com.medicare.notification.repository.PatientDoctorRepository;
 import com.medicare.security.account.AccountAccess;
 import com.medicare.user.entity.Role;
 import com.medicare.user.entity.User;
@@ -23,22 +24,27 @@ import java.util.*;
  *   <li>Un médecin accède au suivi d'un patient qu'il suit, c'est-à-dire :
  *     <ul>
  *       <li>un patient à qui il a prescrit un traitement (module Médicaments, suivi actif), ou</li>
- *       <li>un patient ayant un rendez-vous non annulé avec lui (module Rendez-vous).</li>
+ *       <li>un patient ayant un rendez-vous non annulé avec lui (module Rendez-vous), ou</li>
+ *       <li>un patient qui l'a rattaché dans « Mes médecins » (module Notifications et documents).</li>
  *     </ul>
  *   </li>
  *   <li>Aucun autre rôle (secrétaire, administrateur) ne voit les données de santé d'autrui.</li>
  * </ul>
+ * C'est la règle unique de suivi médecin ↔ patient : les modules Médicaments, Documents et
+ * Notifications l'utilisent aussi, pour que le médecin voie partout les mêmes patients.
  */
 @Service
 @RequiredArgsConstructor
 public class HealthAccessService {
     public static final String SOURCE_MEDICATIONS = "MEDICATIONS";
     public static final String SOURCE_APPOINTMENTS = "APPOINTMENTS";
+    public static final String SOURCE_CARE_LINK = "CARE_LINK";
 
     private final AccountAccess accounts;
     private final UserRepository users;
     private final DoctorPatientAssignmentRepository assignments;
     private final AppointmentRepository appointments;
+    private final PatientDoctorRepository careLinks;
 
     /** Utilisateur connecté et patient dont on consulte le suivi. */
     public record Access(User viewer, User patient) {
@@ -70,7 +76,8 @@ public class HealthAccessService {
         if (doctor.getRole() != Role.DOCTOR) return false;
         return assignments.existsByDoctorIdAndPatientIdAndActiveTrue(doctor.getId(), patient.getId())
                 || appointments.existsByDoctorIdAndUserIdAndStatusNot(
-                        doctor.getId(), patient.getId(), AppointmentStatus.CANCELLED);
+                        doctor.getId(), patient.getId(), AppointmentStatus.CANCELLED)
+                || careLinks.existsByPatientIdAndDoctorId(patient.getId(), doctor.getId());
     }
 
     /** Patients suivis par le médecin, avec l'origine du lien (Médicaments, Rendez-vous). */
@@ -89,6 +96,14 @@ public class HealthAccessService {
             if (p.getRole() != Role.USER || p.getMergedIntoId() != null) continue;
             byId.putIfAbsent(p.getId(), p);
             sources.computeIfAbsent(p.getId(), k -> new TreeSet<>()).add(SOURCE_APPOINTMENTS);
+        }
+        for (var link : careLinks.findByDoctorId(doctor.getId())) {
+            users.findById(link.getPatientId())
+                    .filter(p -> p.getRole() == Role.USER && p.getMergedIntoId() == null)
+                    .ifPresent(p -> {
+                        byId.putIfAbsent(p.getId(), p);
+                        sources.computeIfAbsent(p.getId(), k -> new TreeSet<>()).add(SOURCE_CARE_LINK);
+                    });
         }
         Map<User, Set<String>> result = new LinkedHashMap<>();
         byId.values().stream()

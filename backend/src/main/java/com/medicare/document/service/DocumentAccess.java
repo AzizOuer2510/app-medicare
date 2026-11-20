@@ -21,8 +21,10 @@ public class DocumentAccess {
             if (viewer.getRole()==Role.ADMIN) return cb.conjunction();
             var owner = cb.equal(root.get("user"),viewer);
             if (viewer.getRole()!=Role.DOCTOR) return owner;
-            return cb.or(owner, cb.and(cb.equal(root.get("sharedDoctor"),viewer),
-                    root.get("user").get("id").in(care.patientIds(viewer))));
+            // Synchronisation médecin ↔ patient : le médecin voit tous les documents (ordonnances,
+            // analyses…) des patients qu'il suit, en lecture seule.
+            var patientIds = care.patientIds(viewer);
+            return patientIds.isEmpty() ? owner : cb.or(owner, root.get("user").get("id").in(patientIds));
         };
     }
     public MedicalDocument get(User viewer,Long id,boolean lock,boolean manage) {
@@ -30,8 +32,7 @@ public class DocumentAccess {
             throw new ApiException(HttpStatus.FORBIDDEN, "EMAIL_NOT_VERIFIED");
         var doc = (lock ? documents.findLockedById(id) : documents.findById(id)).orElseThrow(DocumentAccess::missing);
         if (viewer.getRole()==Role.ADMIN || viewer.getId().equals(doc.getUser().getId())) return doc;
-        if (!manage && doc.getSharedDoctor()!=null && viewer.getId().equals(doc.getSharedDoctor().getId())
-                && care.follows(viewer, doc.getUser().getId())) return doc;
+        if (!manage && viewer.getRole()==Role.DOCTOR && care.follows(viewer, doc.getUser().getId())) return doc;
         throw missing();
     }
     private static ApiException missing() { return new ApiException(HttpStatus.NOT_FOUND,"Document introuvable."); }

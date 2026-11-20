@@ -29,10 +29,12 @@ class DocumentRepository {
     String? query,
     bool? favorite,
     String sort = 'recent',
+    int? patientId,
   }) async {
     final response = await client.dio.get(
       '/documents',
       queryParameters: {
+        if (patientId != null) 'patientId': patientId,
         if (category != null) 'category': category,
         if (query != null && query.trim().isNotEmpty) 'q': query.trim(),
         if (favorite != null) 'favorite': favorite,

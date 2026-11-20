@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MediCare : cahier des charges</title>
+<style>
+:root { --bg:#f6f9fa; --surface:#fff; --fg:#14313a; --muted:#5a7480; --line:#d6e3e7; --accent:#0b7d88; --soft:#e2f2f3; --code:#eef3f5; }
+@media (prefers-color-scheme: dark) { :root { --bg:#0d1a1e; --surface:#142529; --fg:#e3eef0; --muted:#93aab2; --line:#26404a; --accent:#4cc3cc; --soft:#163a40; --code:#1b3036; color-scheme: dark; } }
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.6 "Segoe UI", system-ui, sans-serif; }
+.layout { display:grid; grid-template-columns: 280px minmax(0,1fr); max-width:1400px; margin:0 auto; }
+nav { position:sticky; top:0; height:100vh; overflow:auto; padding:24px 16px; border-right:1px solid var(--line); font-size:13.5px; }
+nav a { display:block; color:var(--fg); text-decoration:none; padding:3px 8px; border-radius:6px; }
+nav a:hover { background:var(--soft); }
+nav a.h3 { padding-left:20px; color:var(--muted); }
+nav b { display:block; font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--accent); margin:0 8px 8px; }
+main { padding:32px clamp(16px,4vw,48px) 80px; min-width:0; }
+h1 { font-size:2.1rem; line-height:1.2; margin:0 0 12px; }
+h2 { font-size:1.55rem; margin:48px 0 12px; padding-top:16px; border-top:2px solid var(--line); }
+h3 { font-size:1.25rem; margin:36px 0 10px; color:var(--accent); }
+h4 { font-size:1.02rem; margin:26px 0 8px; }
+p, li { max-width:80ch; }
+a { color:var(--accent); }
+code { font-family: Consolas, "Cascadia Mono", monospace; font-size:.88em; background:var(--code); padding:1px 5px; border-radius:4px; }
+pre { background:var(--code); padding:14px; border-radius:10px; overflow:auto; }
+pre code { padding:0; background:none; }
+blockquote { margin:16px 0; padding:10px 16px; border-left:3px solid var(--accent); background:var(--soft); border-radius:0 8px 8px 0; color:var(--muted); }
+table { border-collapse:collapse; display:block; overflow-x:auto; margin:12px 0 18px; font-size:13.5px; background:var(--surface); border:1px solid var(--line); border-radius:10px; }
+th, td { padding:8px 12px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; }
+th { background:var(--soft); font-size:12px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); }
+tr:last-child td { border-bottom:0; }
+.mermaid { background:#fff; border:1px solid var(--line); border-radius:10px; padding:12px; overflow:auto; margin:12px 0 18px; }
+hr { border:0; border-top:1px solid var(--line); margin:32px 0; }
+@media (max-width: 900px) { .layout { grid-template-columns:1fr; } nav { display:none; } }
+@media print {
+  :root { --bg:#fff; --surface:#fff; --fg:#111; --muted:#444; --line:#ccc; --accent:#0b6670; --soft:#eef6f7; --code:#f3f5f6; color-scheme: light; }
+  body { font-size:11pt; }
+  .layout { display:block; max-width:none; }
+  nav { display:none; }
+  main { padding:0; }
+  h2 { break-before:auto; }
+  h2, h3, h4 { break-after:avoid; }
+  table, pre, svg, li { break-inside:avoid; }
+  p:has(> strong:only-child) { break-after:avoid; }
+  hr { display:none; }
+  a { color:inherit; text-decoration:none; }
+}
+</style>
+</head>
+<body>
+<div class="layout">
+  <nav id="toc"><b>Sommaire</b></nav>
+  <main id="content">Chargement…</main>
+</div>
+<script type="text/markdown" id="md">
+# Cahier des charges · MediCare
+
+**Application mobile de suivi médical**
+
+- **Projet :** MediCare
+- **Cours :** Développement mobile (Flutter)
+- **Équipe :** Eya Rahmeni, Mohamed Dhia Cherni, Ameni Rahmeni, Mohamed Aziz Ouerfelli, Iyed Gammar
+- **Version :** 20/11/2026
+
+## Sommaire
+
+- [1. Présentation du projet](#1-présentation-du-projet)
+- [2. Équipe et répartition des modules](#2-équipe-et-répartition-des-modules)
+- [3. Acteurs et droits](#3-acteurs-et-droits)
+- [4. Besoins fonctionnels](#4-besoins-fonctionnels)
+- [5. Besoins non fonctionnels](#5-besoins-non-fonctionnels)
+- [6. Contraintes techniques](#6-contraintes-techniques)
+- [7. Architecture et données](#7-architecture-et-données)
+- [8. Livrables](#8-livrables)
+- [9. Critères de validation (recette)](#9-critères-de-validation-recette)
+- [10. Phases de réalisation](#10-phases-de-réalisation)
+
+---
+
+## 1. Présentation du projet
+
+| Élément | Description |
+|---|---|
+| Nom | MediCare |
+| Type | Application mobile de suivi médical (Android, également utilisable dans un navigateur) |
+| Cadre | Projet du cours de développement mobile (Flutter) |
+| Utilisateurs | Patients, médecins, secrétaires médicales, administrateur |
+| Principe | Un compte unique, cinq modules complémentaires, une API sécurisée et une base de données commune |
+
+**Contexte.** Le suivi d'un patient est aujourd'hui dispersé : rendez-vous par téléphone, ordonnances papier, traitements oubliés, mesures notées à la main, documents égarés. Le médecin n'a pas de vue d'ensemble entre deux consultations.
+
+**Objectif général.** Réunir dans une seule application tout ce qui relie un patient à ses médecins : comptes et sécurité, rendez-vous, traitements, suivi de santé et de nutrition, documents et notifications, avec une **synchronisation permanente** entre le médecin et ses patients.
+
+**Objectifs mesurables**
+
+- Le patient retrouve en un seul endroit ses rendez-vous, son planning de prises, ses mesures et ses ordonnances.
+- Toute action du médecin (ordonnance, planning, mesure de consultation) est visible par le patient sans délai, avec une notification.
+- Toute action du patient (prise confirmée, mesure, repas, document) est visible par les médecins qui le suivent.
+- Aucune donnée d'un patient n'est accessible à un médecin qui ne le suit pas.
+
+## 2. Équipe et répartition des modules
+
+| Membre | Module | Responsabilités |
+|---|---|---|
+| **Eya Rahmeni** | M1 · Authentification et sécurité | Inscription, connexion, double vérification, codes de récupération, profil, rôles, fusion de comptes, journal d'audit |
+| **Mohamed Dhia Cherni** | M2 · Rendez-vous | Prise et gestion des rendez-vous, agenda, espace secrétaire, rappels automatiques, risque d'absence |
+| **Ameni Rahmeni** | M3 · Médicaments | Ordonnances, préremplissage du planning, planning de prises, confirmation des prises, observance, stock |
+| **Mohamed Aziz Ouerfelli** | M4 · Suivi santé et nutrition | Mesures, IMC, objectifs, nutrition, hydratation, IA santé, dossier patient côté médecin, règle commune de suivi |
+| **Iyed Gammar** | M5 · Notifications et documents | Notifications, rappels, documents médicaux, partage, analyse de documents, synchronisation des ordonnances |
+
+Chaque membre est responsable de la conception, du développement (Flutter et Spring Boot), des tests et de la documentation de son module, ainsi que de son intégration avec les autres.
+
+## 3. Acteurs et droits
+
+| Acteur | Droits principaux |
+|---|---|
+| Visiteur | Créer un compte, se connecter, récupérer son mot de passe |
+| Patient (`USER`) | Gérer ses rendez-vous, confirmer ses prises, saisir ses mesures, repas et eau, gérer ses documents et ses médecins, recevoir ses notifications |
+| Secrétaire (`USER` affecté) | Gérer l'agenda des médecins qui lui sont affectés |
+| Médecin (`DOCTOR`) | Envoyer des ordonnances, créer le planning de prises, consulter le dossier complet de ses patients suivis, enregistrer des mesures de consultation, créer des rappels pour eux |
+| Administrateur (`ADMIN`) | Valider rôles et fusions, affecter les secrétaires, consulter l'audit, administrer les notifications |
+
+## 4. Besoins fonctionnels
+
+Priorité : **Essentielle** (indispensable à la livraison) ou **Importante** (forte valeur ajoutée).
+
+**M1 · Authentification et sécurité (Eya Rahmeni)**
+
+| Réf. | Besoin | Priorité |
+|---|---|---|
+| F1.1 | Créer un compte avec vérification de l'email par code | Essentielle |
+| F1.2 | Se connecter par mot de passe, par code email ou par code de récupération | Essentielle |
+| F1.3 | Réinitialiser un mot de passe oublié (code valable 10 min, 5 essais) | Essentielle |
+| F1.4 | Activer la double vérification et obtenir 10 codes de récupération | Importante |
+| F1.5 | Modifier son profil et son mot de passe | Essentielle |
+| F1.6 | Demander un rôle ou une fusion de comptes ; validation par l'administrateur | Importante |
+| F1.7 | Consulter le journal d'audit et déclarer un incident (administrateur) | Importante |
+
+**M2 · Rendez-vous (Mohamed Dhia Cherni)**
+
+| Réf. | Besoin | Priorité |
+|---|---|---|
+| F2.1 | Prendre, modifier, annuler et supprimer un rendez-vous avec un médecin | Essentielle |
+| F2.2 | Voir ses rendez-vous en agenda ou en liste, avec recherche et filtres | Essentielle |
+| F2.3 | Refuser les conflits d'horaire | Essentielle |
+| F2.4 | Gérer l'agenda d'un médecin depuis l'espace secrétaire | Importante |
+| F2.5 | Suggérer une spécialité selon le motif et estimer le risque d'absence | Importante |
+| F2.6 | Envoyer automatiquement un rappel avant le rendez-vous | Importante |
+
+**M3 · Médicaments (Ameni Rahmeni)**
+
+| Réf. | Besoin | Priorité |
+|---|---|---|
+| F3.1 | Envoyer une ordonnance (photo ou PDF) à un patient suivi | Essentielle |
+| F3.2 | Préremplir le planning du patient à partir de l'ordonnance, avec vérification du médecin | Importante |
+| F3.3 | Ajouter un médicament et ses horaires au planning d'un patient | Essentielle |
+| F3.4 | Afficher au patient son traitement et ses prises du jour | Essentielle |
+| F3.5 | Permettre au patient de confirmer chaque prise (effectuée, manquée, ignorée, reportée) | Essentielle |
+| F3.6 | Suivre l'observance par patient (médecin) et ses statistiques (patient) | Essentielle |
+| F3.7 | Gérer le stock et alerter quand il est bas | Importante |
+| F3.8 | Rappeler les prises par notification sur le téléphone | Importante |
+
+**M4 · Suivi santé et nutrition (Mohamed Aziz Ouerfelli)**
+
+| Réf. | Besoin | Priorité |
+|---|---|---|
+| F4.1 | Saisir, modifier et supprimer des mesures (poids, tension, pouls, température, glycémie) | Essentielle |
+| F4.2 | Lire une mesure par photo de l'appareil, avec validation du patient | Importante |
+| F4.3 | Afficher le tableau de bord, l'IMC (catégories OMS), les tendances et les courbes | Essentielle |
+| F4.4 | Définir des objectifs (taille, poids cible, calories, eau) | Essentielle |
+| F4.5 | Tenir un journal alimentaire et suivre l'hydratation | Essentielle |
+| F4.6 | Analyser la santé par IA avec alertes, et reconnaître les aliments par photo ou description | Importante |
+| F4.7 | Exporter un rapport PDF et des statistiques sur 7 jours à 6 mois | Importante |
+| F4.8 | Donner au médecin un dossier patient (santé, médicaments, documents) et les mesures de consultation | Essentielle |
+
+**M5 · Notifications et documents (Iyed Gammar)**
+
+| Réf. | Besoin | Priorité |
+|---|---|---|
+| F5.1 | Recevoir des notifications après chaque action qui concerne l'utilisateur | Essentielle |
+| F5.2 | Créer, reporter et annuler des rappels ; le médecin pour ses patients | Importante |
+| F5.3 | Déposer, consulter, classer et supprimer ses documents médicaux | Essentielle |
+| F5.4 | Retrouver toutes les ordonnances envoyées par ses médecins dans Documents → Ordonnances | Essentielle |
+| F5.5 | Donner aux médecins qui suivent le patient l'accès en lecture à ses documents | Essentielle |
+| F5.6 | Partager un document par lien QR protégé par PIN, avec expiration et révocation | Importante |
+| F5.7 | Analyser un document par IA et proposer un rappel de suivi, à confirmer | Importante |
+
+**Synchronisation médecin ↔ patient (transverse)**
+
+| Réf. | Besoin | Priorité |
+|---|---|---|
+| S.1 | Une seule règle de suivi médecin ↔ patient pour tous les modules (traitement, rendez-vous ou « Mes médecins ») | Essentielle |
+| S.2 | Ordonnance envoyée → visible chez le patient avec notification | Essentielle |
+| S.3 | Planning créé par le médecin → visible chez le patient avec notification | Essentielle |
+| S.4 | Prises confirmées par le patient → visibles dans l'observance du médecin | Essentielle |
+
+## 5. Besoins non fonctionnels
+
+| Domaine | Exigence |
+|---|---|
+| Sécurité | Jeton JWT sur chaque requête ; mots de passe de 12 caractères minimum, hachés (BCrypt), refus des mots de passe divulgués ; secrets jamais stockés en clair ; limitation des tentatives ; révocation des sessions |
+| Confidentialité | Un médecin ne voit que ses patients suivis ; un patient ne voit que ses données ; les photos analysées par l'IA ne sont pas conservées ; l'IA tourne en local (aucune donnée de santé envoyée à un service externe) |
+| Fiabilité | Rien n'est enregistré à partir de l'IA sans validation humaine ; une notification qui échoue n'annule jamais l'action d'origine |
+| Performance | Réponse de l'API sous 1 s pour les écrans courants ; réponses IA en quelques secondes une fois le modèle chargé |
+| Ergonomie | Interface en français, messages d'erreur clairs, confirmations avant les actions importantes, utilisable sur téléphone et en navigateur |
+| Disponibilité | Fonctionnement en Wi-Fi local ; mode démonstration si l'IA n'est pas disponible |
+| Maintenabilité | Code organisé par module (`features/…` côté Flutter, `com.medicare.…` côté serveur), tests automatisés, documentation à jour |
+| Portabilité | Un seul code Flutter pour Android et le web |
+
+## 6. Contraintes techniques
+
+| Élément | Choix imposé ou retenu |
+|---|---|
+| Application | Flutter (Dart), Riverpod, Dio, `flutter_secure_storage` |
+| Serveur | Spring Boot 3.5, Java 21, Spring Security, JWT, JPA/Hibernate |
+| Base de données | PostgreSQL 18 (`app_medicare`), H2 pour la démonstration |
+| IA | Ollama en local (`llama3.2`, `llava`), Tesseract pour l'OCR |
+| Appareil de test | Téléphone Android CRT NX1, connecté au PC par Wi-Fi |
+| Gestion du code | Git, dépôt GitHub `app-medicare` |
+
+## 7. Architecture et données
+
+```text
+Téléphone Android ou navigateur  ──Wi-Fi──►  API Spring Boot (port 8082)  ──►  PostgreSQL app_medicare
+Application Flutter (jeton JWT)               Sécurité, règles d'accès         29 tables reliées à users
+                                              ├─► IA locale Ollama (llama3.2, llava)
+                                              ├─► OCR local Tesseract (ordonnances)
+                                              └─► Fichiers des documents médicaux
+```
+
+| Module | Tables principales |
+|---|---|
+| M1 · Authentification | `users`, `email_challenge`, `recovery_code`, `password_history`, `role_change_request`, `account_merge_request`, `security_audit_event` |
+| M2 · Rendez-vous | `appointment`, `appointment_secretary_doctors` |
+| M3 · Médicaments | `prescription`, `medication`, `medication_reminder`, `medication_stock_entry`, `doctor_patient_assignments` |
+| M4 · Suivi santé et nutrition | `health_record`, `health_goal`, `meal`, `hydration`, `food` |
+| M5 · Notifications et documents | `notifications`, `reminders`, `patient_doctor`, `medical_documents`, `document_shares`, `document_analyses` |
+
+**Règle commune de suivi :** un médecin suit un patient s'il lui a prescrit un traitement, s'il a un rendez-vous non annulé avec lui, ou si le patient l'a ajouté dans « Mes médecins ». Cette règle unique protège les données de tous les modules.
+
+## 8. Livrables
+
+| Livrable | Contenu |
+|---|---|
+| Code source | Dépôt GitHub (`frontend/` Flutter, `backend/` Spring Boot) |
+| Application Android | APK installable (`app-release.apk`) |
+| Application web | Version compilée (`frontend/build/web`) |
+| Base de données | Schéma créé automatiquement, script de migration `backend/db/migrations/` |
+| Documentation | Ce cahier des charges, le document de vision technique (modules, données, compilation), `README.md`, `RUN.md` |
+| Tests | 80 tests backend et 61 tests Flutter |
+
+## 9. Critères de validation (recette)
+
+| Critère | Comment le vérifier |
+|---|---|
+| Tous les tests passent | `mvn test` (80/80) et `flutter test` (61/61) |
+| Parcours patient complet | Inscription → rendez-vous → prise confirmée → mesure → document, sur le téléphone en Wi-Fi |
+| Parcours médecin complet | Patients suivis → dossier patient → envoi d'une ordonnance → ajout au planning → observance |
+| Synchronisation | L'ordonnance et le médicament envoyés par le médecin apparaissent chez le patient avec une notification ; la prise confirmée par le patient apparaît dans l'observance du médecin |
+| Confidentialité | Un médecin qui ne suit pas un patient reçoit `404` sur ses données ; un patient ne peut pas toucher aux prises d'un autre |
+| Persistance | Chaque action faite sur le téléphone est retrouvée dans PostgreSQL `app_medicare` |
+| IA | Les valeurs proposées par l'IA ne sont enregistrées qu'après validation ; une photo sans appareil est refusée |
+
+## 10. Phases de réalisation
+
+1. **Analyse** : besoins par module, acteurs, règles d'accès.
+2. **Conception** : modèle de données, API, maquettes des écrans.
+3. **Développement par module** : chaque membre réalise son module (Flutter et serveur).
+4. **Intégration** : regroupement des cinq modules, règle commune de suivi, synchronisation médecin ↔ patient.
+5. **Tests et recette** : tests automatisés, tests sur le téléphone en Wi-Fi, vérification dans PostgreSQL.
+6. **Livraison** : APK, version web, documentation et présentation.
+
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script>
+const slug = s => s.toLowerCase().trim().replace(/[^\p{L}\p{N} _-]/gu, "").replace(/ /g, "-");
+const content = document.getElementById("content");
+content.innerHTML = marked.parse(document.getElementById("md").textContent);
+const toc = document.getElementById("toc");
+content.querySelectorAll("h2, h3").forEach(h => {
+  h.id = slug(h.textContent);
+  const a = document.createElement("a");
+  a.href = "#" + h.id; a.textContent = h.textContent; a.className = h.tagName.toLowerCase();
+  toc.appendChild(a);
+});
+content.querySelectorAll("pre code.language-mermaid").forEach(c => {
+  const d = document.createElement("div"); d.className = "mermaid"; d.textContent = c.textContent;
+  c.parentElement.replaceWith(d);
+});
+mermaid.initialize({ startOnLoad: false, theme: "default", er: { useMaxWidth: false } });
+mermaid.run({ querySelector: ".mermaid" });
+if (location.hash) document.getElementById(decodeURIComponent(location.hash.slice(1)))?.scrollIntoView();
+</script>
+</body>
+</html>

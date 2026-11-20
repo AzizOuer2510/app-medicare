@@ -9,12 +9,12 @@ import '../home/doctor_dashboard_page.dart';
 import 'medication.dart';
 import 'medication_assistant_page.dart';
 import 'medication_card.dart';
+import '../documents/pages/documents_page.dart';
 import 'medication_form_page.dart';
 import 'medication_history_page.dart';
 import 'medication_notifications.dart';
 import 'medication_statistics_page.dart';
 import 'medication_stock_page.dart';
-import 'prescriptions_page.dart';
 
 class MedicationsPage extends ConsumerStatefulWidget {
   const MedicationsPage({super.key});
@@ -50,8 +50,12 @@ class _MedicationsPageState extends ConsumerState<MedicationsPage> {
         items = loaded;
         loading = false;
       });
-      for (final medication in loaded) {
-        unawaited(_syncNotifications(medication));
+      // Les rappels sur l'appareil ne concernent que le patient lui-même
+      // (un administrateur voit les traitements d'autres personnes).
+      if (ref.read(authenticationStateProvider).valueOrNull?.role == 'USER') {
+        for (final medication in loaded) {
+          unawaited(_syncNotifications(medication));
+        }
       }
     } catch (_) {
       if (!mounted) return;
@@ -163,8 +167,8 @@ class _MedicationsPageState extends ConsumerState<MedicationsPage> {
   }
 
   void _openHistory(Medication medication) {
-    final readOnly =
-        ref.read(authenticationStateProvider).valueOrNull?.role == 'USER';
+    // Le patient confirme lui-même ses prises (le médecin les voit dans le dossier patient).
+    const readOnly = false;
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -303,12 +307,14 @@ class _MedicationsPageState extends ConsumerState<MedicationsPage> {
             ),
           ),
           IconButton(
-            tooltip: 'Prescriptions',
+            tooltip: 'Mes ordonnances',
             icon: const Icon(Icons.description_outlined),
+            // Les ordonnances envoyées par le médecin sont dans Documents → Ordonnances.
             onPressed: () => Navigator.push(
               context,
               MaterialPageRoute(
-                builder: (_) => const PrescriptionsPage(),
+                builder: (_) =>
+                    const DocumentsPage(initialCategory: 'PRESCRIPTION'),
               ),
             ),
           ),
@@ -425,7 +431,7 @@ class _MedicationsPageState extends ConsumerState<MedicationsPage> {
                         onHistory: () => _openHistory(medication),
                         onSchedule: () => _openSchedule(
                           medication,
-                          readOnly: patientReadOnly,
+                          readOnly: false,
                         ),
                         readOnly: patientReadOnly,
                         onStock: () => Navigator.push(

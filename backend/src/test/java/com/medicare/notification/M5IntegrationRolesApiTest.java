@@ -126,9 +126,15 @@ class M5IntegrationRolesApiTest {
         call(get("/api/documents/" + document), doctor, null, 404);
     }
 
-    @Test void doctorUsesOnlyLinkedPatientDocumentsAndRemindersAndCannotReadPrivateDocument() throws Exception {
-        long privateDocument = upload(patient, null, 201);
-        call(get("/api/documents/" + privateDocument), doctor, null, 404);
+    @Test void doctorReadsAllDocumentsOfFollowedPatientsButCannotChangeThem() throws Exception {
+        // Synchronisation médecin ↔ patient : le médecin qui suit le patient voit tous ses documents,
+        // en lecture seule ; il ne peut ni les modifier ni les supprimer.
+        long patientDocument = upload(patient, null, 201);
+        call(get("/api/documents/" + patientDocument), doctor, null, 200);
+        call(put("/api/documents/" + patientDocument), doctor,
+                Map.of("title", "Modifié par le médecin", "category", "OTHER"), 404);
+        call(delete("/api/documents/" + patientDocument), doctor, null, 404);
+        call(get("/api/documents/" + patientDocument), other, null, 404);
         long sharedDocument = upload(doctor, patient.getId(), 201);
         call(get("/api/documents/" + sharedDocument + "/content"), doctor, null, 200);
         call(get("/api/documents/" + sharedDocument + "/content"), patient, null, 200);
@@ -151,18 +157,19 @@ class M5IntegrationRolesApiTest {
         long measure = call(post("/api/health-records"), patient,
                 Map.of("recordedAt", "2030-12-14T10:00:00", "weight", 70), 200).path("id").asLong();
         upload(patient, null, 201);
-        assertThat(call(get("/api/notifications"), patient, null, 200)).hasSize(5);
+        // 5 notifications de module + « Nouveau traitement » (médicament ajouté par le médecin au planning du patient).
+        assertThat(call(get("/api/notifications"), patient, null, 200)).hasSize(6);
         assertThat(call(get("/api/notifications"), doctor, null, 200)).isEmpty();
         for (String path : new String[]{"/api/appointments", "/api/medications", "/api/health-records"})
             assertThat(call(get(path), patient, null, 200)).hasSize(1);
         call(post("/api/appointments"), patient, Map.of("doctorName", "Sans date"), 400);
-        assertThat(call(get("/api/notifications"), patient, null, 200)).hasSize(5);
+        assertThat(call(get("/api/notifications"), patient, null, 200)).hasSize(6);
         call(post("/api/medications"), patient, Map.of("name", "Action interdite"), 403);
         call(put("/api/appointments/" + appointment), patient,
                 Map.of("dateTime", "2030-12-16T10:00:00", "doctorName", "Médecin test"), 200);
         call(put("/api/medications/" + medication), doctor, medicationRequest, 200);
         call(delete("/api/health-records/" + measure), patient, null, 200);
-        assertThat(call(get("/api/notifications"), patient, null, 200)).hasSize(8);
+        assertThat(call(get("/api/notifications"), patient, null, 200)).hasSize(9);
         assertThat(call(get("/api/notifications"), other, null, 200)).isEmpty();
     }
 

@@ -83,7 +83,8 @@ class LibraryRepository extends DocumentRepository {
       {String? category,
       String? query,
       bool? favorite,
-      String sort = 'recent'}) async {
+      String sort = 'recent',
+      int? patientId}) async {
     queries.add(
         {'category': category, 'q': query, 'favorite': favorite, 'sort': sort});
     final result = items

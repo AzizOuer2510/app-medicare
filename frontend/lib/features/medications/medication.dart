@@ -30,6 +30,10 @@ class Medication {
   final num? lowStockThreshold;
   final num? packageQuantity;
 
+  /// Patient concerné (utile côté médecin, qui voit les plannings de plusieurs patients).
+  final int? patientId;
+  final String? patientName;
+
   const Medication({
     required this.id,
     required this.name,
@@ -52,6 +56,8 @@ class Medication {
     this.quantityUnit,
     this.lowStockThreshold,
     this.packageQuantity,
+    this.patientId,
+    this.patientName,
   });
 
   factory Medication.fromJson(Map<String, dynamic> json) {
@@ -87,6 +93,8 @@ class Medication {
       quantityUnit: (json['stockUnit'] ?? json['quantityUnit'])?.toString(),
       lowStockThreshold: _number(json['lowStockThreshold']),
       packageQuantity: _number(json['packageQuantity']),
+      patientId: _number(json['patientId'])?.toInt(),
+      patientName: json['patientName']?.toString(),
     );
   }
 
