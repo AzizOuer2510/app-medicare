@@ -4,19 +4,20 @@ MediCare est une application mobile de suivi médical. Elle relie le patient, le
 
 > Sources : code de `Dev_Mobile-main` (frontend Flutter `lib/`, backend Spring Boot `com.medicare.*`), base PostgreSQL `app_medicare` et tests automatisés (80 tests backend, 61 tests Flutter), état du 20/11/2026. Les exemples « de bout en bout » des modules M4 et M3/M5 (ordonnance, planning, observance) ont été vérifiés sur la vraie base ; les autres sont décrits à partir du code.
 
-Document de révision : architecture, les cinq modules présentés de la même façon, les notions du cours et le processus complet de compilation et de lancement. Le cahier des charges est dans un document séparé (`CAHIER-DES-CHARGES.html`).
+Document de révision : architecture générale, architecture front-end Flutter, les cinq modules présentés de la même façon, les notions du cours et le processus complet de compilation et de lancement. Le cahier des charges est dans un document séparé (`CAHIER-DES-CHARGES.html`).
 
 ## Sommaire
 
 - [1. Vue d'ensemble](#1-vue-densemble)
-- [2. Modules](#2-modules)
+- [2. Architecture front-end (Flutter)](#2-architecture-front-end-flutter)
+- [3. Modules](#3-modules)
   - [M1 · Authentification et sécurité](#m1--authentification-et-sécurité)
   - [M2 · Rendez-vous](#m2--rendez-vous)
   - [M3 · Médicaments](#m3--médicaments)
   - [M4 · Suivi santé et nutrition](#m4--suivi-santé-et-nutrition)
   - [M5 · Notifications et documents](#m5--notifications-et-documents)
-- [3. Notions du cours utilisées dans le projet](#3-notions-du-cours-utilisées-dans-le-projet)
-- [4. Compiler et lancer l'application](#4-compiler-et-lancer-lapplication)
+- [4. Notions du cours utilisées dans le projet](#4-notions-du-cours-utilisées-dans-le-projet)
+- [5. Compiler et lancer l'application](#5-compiler-et-lancer-lapplication)
 
 ---
 
@@ -109,15 +110,222 @@ Chaque module ci-dessous suit le même plan :
 3. **Volet intelligent** : IA ou traitements automatiques ;
 4. **Opérations CRUD** : qui crée, lit, modifie et supprime quoi ;
 5. **Écrans, API et tables** ;
-6. **Données** : schéma, tables et relations ;
-7. **Une action de bout en bout**, du téléphone à la base ;
-8. **Règles métier** ;
-9. **Synchronisation** avec les autres modules ;
-10. **Notions du cours** utilisées.
+6. **Architecture front-end** : fichiers Flutter, types de widgets, état, navigation et flux ;
+7. **Données** : schéma, tables et relations ;
+8. **Une action de bout en bout**, du téléphone à la base ;
+9. **Règles métier** ;
+10. **Synchronisation** avec les autres modules ;
+11. **Notions du cours** utilisées.
 
 ---
 
-## 2. Modules
+## 2. Architecture front-end (Flutter)
+
+Cette section décrit l'application Flutter elle-même (dossier `frontend/`), indépendamment du serveur : son organisation, son démarrage, sa navigation, sa gestion d'état, ses appels réseau et ses fonctions natives. Chaque module détaille ensuite sa propre architecture front-end.
+
+### 2.1 Les couches de l'application
+
+```text
+┌──────────────────────────────────────────────────────────────────────────┐
+│ PRÉSENTATION   Pages (Scaffold) et widgets réutilisables                 │
+│                StatelessWidget · ConsumerWidget · ConsumerStatefulWidget │
+├──────────────────────────────────────────────────────────────────────────┤
+│ ÉTAT           Riverpod : Provider, StateProvider, StateNotifierProvider,│
+│                FutureProvider ; état local d'écran avec setState()       │
+├──────────────────────────────────────────────────────────────────────────┤
+│ ACCÈS AUX      Dépôts (AuthRepository, DocumentRepository,               │
+│ DONNÉES        NotificationRepository) ou appels Dio directs ;           │
+│                modèles avec fromJson (AuthUser, Medication…)             │
+├──────────────────────────────────────────────────────────────────────────┤
+│ CŒUR           ApiClient (Dio + intercepteur JWT) · TokenStorage         │
+│ (core/)        (flutter_secure_storage) · CareWorkspace (thème commun)   │
+├──────────────────────────────────────────────────────────────────────────┤
+│ PLATEFORME     Notifications locales, appareil photo, fichiers, PDF, QR  │
+└──────────────────────────────────────────────────────────────────────────┘
+                                   │ HTTP JSON + jeton JWT
+                                   ▼
+                       API Spring Boot  /api/…  (port 8082)
+```
+
+Principe : **un écran ne parle jamais directement au stockage ni à l'URL du serveur**. Il passe par un provider (`apiClientProvider`, un dépôt), ce qui permet de tout remplacer par des faux objets dans les tests.
+
+### 2.2 Arborescence de `frontend/lib`
+
+```text
+lib/
+├── main.dart                     Point d'entrée : ProviderScope, MaterialApp, routes nommées, garde de session
+├── core/                         Partagé par tous les modules
+│   ├── providers.dart            tokenStorageProvider, apiClientProvider, sessionExpirationProvider
+│   ├── network/api_client.dart   Dio : URL de base, délais, intercepteur (jeton, expiration 401)
+│   ├── storage/token_storage.dart  Jeton JWT dans flutter_secure_storage
+│   └── widgets/care_workspace.dart Thème et gabarit des modules Notifications/Documents (NavigationBar)
+└── features/                     Un dossier par fonctionnalité
+    ├── auth/                     M1 · connexion, inscription, vérification, mot de passe oublié, état de session
+    ├── profile/  security/       M1 · profil, réglages, sécurité et administration
+    ├── home/                     Accueil patient, tableau de bord médecin, patients suivis, dossier patient
+    ├── appointments/             M2 · rendez-vous patient, espace secrétaire
+    ├── medications/              M3 · traitements, planning, prises, stock, ordonnances, observance
+    ├── health/                   M4 · santé, nutrition, hydratation, IA, statistiques, PDF
+    ├── notifications/            M5 · notifications, rappels, contacts de soin, administration
+    └── documents/                M5 · documents, aperçu, partage QR, analyse
+```
+
+Organisation **par fonctionnalité** (feature-first) : tout ce qui concerne un module (pages, widgets, modèles, dépôt) est dans son dossier, ce qui permet à chaque membre de l'équipe de travailler sur son module sans gêner les autres.
+
+### 2.3 Démarrage de l'application
+
+1. `main()` appelle `WidgetsFlutterBinding.ensureInitialized()` puis `initializeDateFormatting('fr_FR')` (dates en français).
+2. `runApp(ProviderScope(child: MediCareApp()))` : `ProviderScope` rend les providers Riverpod disponibles dans tout l'arbre.
+3. `AuthenticationController` démarre avec l'état `loading` et appelle `restoreSession()` : il relit le jeton dans `flutter_secure_storage`, puis demande `GET /users/me`.
+4. `MediCareApp` observe `authenticationStateProvider` avec `ref.watch` et choisit l'écran avec `authState.when(…)` :
+   - `loading` → écran de démarrage (`CircularProgressIndicator`) ;
+   - `data(null)` → `LoginPage` ; `data(user)` → `HomePage` ;
+   - `error` → `_SessionRecoveryPage` (« Réessayer » sans perdre le jeton si le serveur est injoignable).
+5. `HomePage` adapte l'accueil au rôle : un médecin voit `DoctorDashboardPage`, un patient voit les cartes des cinq modules.
+
+### 2.4 Navigation
+
+| Mécanisme | Utilisation dans MediCare | Exemple |
+|---|---|---|
+| **Routes nommées** (`routes:` de `MaterialApp`, `pushNamed`) | Pages générales : `/login`, `/register`, `/forgot-password`, `/home`, `/profile`, `/profile/edit`, `/settings`, `/security` | `Navigator.pushNamed(context, '/register')` |
+| **Garde de route** | `_ProtectedPage` enveloppe les routes privées : sans session, elle affiche `LoginPage` | `'/profile': (_) => const _ProtectedPage(child: ProfilePage())` |
+| **`Navigator.push` + `MaterialPageRoute`** | Pages de module, avec **paramètres passés par le constructeur** | `PatientFilePage(patientId: 7, patientName: 'Amine', initialTab: 1)` |
+| **Valeur de retour** | Une page renvoie un résultat avec `Navigator.pop(context, true)` ; l'appelant recharge ses données | `final added = await Navigator.push<bool>(…); if (added == true) _load();` |
+| **Onglets** | `TabBar` + `TabBarView` (`TabController` ou `DefaultTabController`) | Santé (3 onglets), dossier patient (3), Sécurité (3 ou 4) |
+| **Barre de navigation inférieure** | `NavigationBar` (Material 3) dans `CareWorkspace` | Notifications ↔ Documents, avec `pushReplacement` |
+| **Fenêtres** | `showDialog`, `showModalBottomSheet`, `showDatePicker`, `showTimePicker` | Formulaire de mesure en feuille du bas, confirmations de suppression |
+| **Protection de sortie** | `PopScope` demande confirmation avant de quitter une saisie non envoyée | Envoi d'ordonnance |
+| **Redirection automatique** | À l'expiration de la session, `ref.listen` dans `MediCareApp` fait `pushNamedAndRemoveUntil('/login', …)` | Jeton refusé (401) |
+
+Parcours selon le rôle :
+
+```text
+LoginPage ──► HomePage
+               ├── Patient : Rendez-vous · Médicaments · Suivi santé · Notifications · Documents · Profil
+               └── Médecin : DoctorDashboardPage
+                      ├── Envoyer une ordonnance / Ajouter au planning
+                      ├── Observance des traitements ──► PatientFilePage (onglet Médicaments)
+                      ├── Patients suivis ──────────────► PatientFilePage (Santé · Médicaments · Documents)
+                      ├── Suivi santé des patients ─────► HealthPage(patient)
+                      └── Notifications · Documents
+```
+
+### 2.5 Gestion d'état avec Riverpod
+
+| Provider | Type | Rôle |
+|---|---|---|
+| `tokenStorageProvider` | `Provider<TokenStorage>` | Accès au stockage sécurisé du jeton |
+| `apiClientProvider` | `Provider<ApiClient>` | Client Dio unique, partagé par toute l'application |
+| `sessionExpirationProvider` | `StateProvider<int>` | Incrémenté quand le serveur répond 401 ; déclenche la déconnexion |
+| `authenticationStateProvider` | `StateNotifierProvider<AuthenticationController, AsyncValue<AuthUser?>>` | Utilisateur connecté (chargement, connecté, déconnecté, erreur) |
+| `authRepositoryProvider` | `Provider<AuthRepository>` | Appels d'authentification |
+| `documentRepositoryProvider`, `notificationRepositoryProvider` | `Provider` | Dépôts du module 5 |
+| `unreadNotificationsProvider` | `FutureProvider.autoDispose<int>` | Badge des non-lus, rafraîchi toutes les 15 s (`Timer` + `invalidateSelf`) |
+| `securityListProvider` | `FutureProvider` | Listes de l'écran Sécurité (demandes, audit) |
+| `healthRevisionProvider` | `StateProvider<int>` | Compteur incrémenté après chaque ajout santé ; les onglets ouverts se rechargent |
+
+Trois façons de lire un provider :
+
+- `ref.watch(p)` dans `build` : l'écran **se reconstruit** quand la valeur change (ex. badge de notifications) ;
+- `ref.read(p)` dans une action : lecture **ponctuelle** sans abonnement (ex. `ref.read(apiClientProvider).dio.post(…)`) ;
+- `ref.listen(p, …)` : **réagir** à un changement sans reconstruire (ex. retour à `/login`, rechargement des onglets santé).
+
+L'**état local** d'un écran (champs, chargement, erreurs, liste affichée) reste dans un `ConsumerStatefulWidget` avec `setState()`. Le patient consulté par un médecin est transmis à tous les sous-écrans du suivi santé par un **`InheritedWidget`** (`HealthScope`).
+
+### 2.6 Accès réseau avec Dio
+
+- **URL de base** : `--dart-define=API_BASE_URL=…` à la compilation ; sinon `http://10.0.2.2:8082/api` sur l'émulateur Android et `http://localhost:8082/api` ailleurs.
+- **Délais** : connexion 10 s, réponse 30 s ; un client dédié `aiDio` (5 min) pour les appels d'IA.
+- **Intercepteur** :
+  - `onRequest` ajoute `Authorization: Bearer <jeton>` à toute requête hors `/auth/…` ;
+  - `onError` : un `401` sur une requête faite avec le jeton courant signale l'expiration de la session.
+- **Modèles** : la réponse JSON (convertie automatiquement par Dio) devient un objet Dart avec `fromJson` (`AuthUser.fromJson`, `Medication.fromJson`, `PrescriptionMedicationSuggestion.fromJson`…).
+- **Fichiers** : envoi en `FormData` + `MultipartFile.fromBytes` (ordonnances, documents) ; photos IA en base64 (`dart:convert`).
+- **Erreurs** : `DioException` est traduite en message français (`authErrorMessage`, `healthErrorMessage`, message du serveur affiché dans le formulaire).
+
+### 2.7 Stockage local
+
+| Donnée | Où | Pourquoi |
+|---|---|---|
+| Jeton JWT | `flutter_secure_storage` (Keystore Android, chiffré) | Rester connecté sans stocker le mot de passe |
+| Données métier | Serveur (PostgreSQL) | Partagées entre patient et médecin, sur tous les appareils |
+| Rappels de prise | Planificateur Android (`flutter_local_notifications`) | Alertes même application fermée |
+
+`SharedPreferences`, `sqflite` et `Hive` ne sont pas utilisés : rien n'est gardé hors ligne en dehors de la session.
+
+### 2.8 Formulaires et validation
+
+- `Form` + `GlobalKey<FormState>` + `TextFormField(validator: …)` puis `_formKey.currentState!.validate()` avant tout envoi.
+- Règles communes dans `AuthValidation` (email, identifiant, mot de passe fort) avec un indicateur de robustesse (`PasswordStrengthIndicator`).
+- Nombres saisis à la française (virgule) convertis par `parseUserNumber` ; bornes vérifiées (ex. poids 1–500 kg).
+- Valeurs proposées par l'IA ou l'OCR : la sauvegarde exige une case « J'ai vérifié… » (`CheckboxListTile`).
+
+### 2.9 Interface et thème
+
+- **Material 3** (`useMaterial3: true`), couleurs générées par `ColorScheme.fromSeed(seedColor: Colors.teal)`.
+- Thèmes de module : `HealthColors` / `health_theme.dart` (M4), `CareColors` / `careTheme()` (M5 et dossier patient).
+- **Adaptation à l'écran** : `LayoutBuilder` et `MediaQuery` (une ou deux colonnes, `NavigationBar` en bas sur téléphone).
+- **Graphiques dessinés à la main** avec `CustomPainter` (`_LineChartPainter` pour les courbes, `_RingPainter` pour les jauges) : aucune bibliothèque de graphiques.
+- Composants réutilisables : `AuthScaffold`, `MedicationCard`, `DocumentCard`, `HealthCard`, `CareHero`, `CareStats`, `NotificationBadgeButton`.
+
+### 2.10 Fonctions natives (plugins)
+
+| Plugin | Usage |
+|---|---|
+| `flutter_riverpod` | Gestion d'état |
+| `dio` | Requêtes HTTP vers l'API |
+| `flutter_secure_storage` | Jeton de session chiffré |
+| `intl` | Dates et nombres en français |
+| `image_picker` | Photo d'un repas ou de l'écran d'un appareil de mesure (appareil photo ou galerie) |
+| `file_picker` | Choix d'une ordonnance ou d'un document (PDF, JPG, PNG) |
+| `flutter_local_notifications`, `timezone`, `flutter_timezone` | Rappels de prise programmés à l'heure locale |
+| `pdf`, `printing` | Export du rapport de santé en PDF |
+| `pdfrx` | Aperçu d'un document PDF dans l'application |
+| `qr_flutter` | QR code du lien de partage d'un document |
+| `go_router` | Déclaré dans `pubspec.yaml` mais **non utilisé** : la navigation passe par `Navigator` |
+
+### 2.11 Configuration Android
+
+- `AndroidManifest.xml` : permission `INTERNET`, `android:networkSecurityConfig="@xml/network_security_config"`.
+- `network_security_config.xml` : HTTP autorisé uniquement vers l'adresse Wi-Fi du PC et les adresses de développement ; tout le reste en HTTPS.
+- Identifiant de l'application : `com.example.medicare`. Compilation : `flutter build apk --release --dart-define=API_BASE_URL=…`.
+
+### 2.12 Tests front-end
+
+61 tests (`flutter test`) avec `flutter_test` :
+
+- **Tests de widgets** : on construit l'application ou un écran (`tester.pumpWidget`), on agit (`tap`, `enterText`, `scrollUntilVisible`) et on vérifie l'affichage (`find.text`, `findsOneWidget`).
+- **Remplacement des dépendances** : `ProviderScope(overrides: […])` injecte des faux objets (`FakeAuthRepository`, `MemoryTokenStorage`) et un faux serveur (`StaticResponseAdapter` branché sur Dio).
+- Exemples : connexion et MFA, session expirée, tableau de bord médecin, dossier patient avec prises et oublis, patient qui voit le médicament et l'ordonnance envoyés par son médecin.
+
+### 2.13 Questions probables lors de la validation
+
+| Question | Réponse |
+|---|---|
+| Quelle est l'architecture de l'application ? | Organisation par fonctionnalité (`features/…`) avec un cœur commun (`core/`) ; couches présentation → état (Riverpod) → dépôts → client Dio → API REST. |
+| Pourquoi Riverpod plutôt que `setState` seul ? | `setState` ne sert qu'à l'état d'un écran. La session, le client HTTP et le badge de notifications sont partagés par toute l'application : Riverpod les rend accessibles partout, sans `BuildContext`, et remplaçables dans les tests. |
+| Différence entre `ref.watch`, `ref.read` et `ref.listen` ? | `watch` reconstruit le widget à chaque changement ; `read` lit une fois dans une action ; `listen` déclenche un effet (navigation, rechargement) sans reconstruire. |
+| `StatelessWidget` ou `StatefulWidget` ? | `StatelessWidget` pour l'affichage pur (`MedicationCard`, `DocumentCard`) ; `StatefulWidget` / `ConsumerStatefulWidget` quand l'écran garde un état (formulaire, chargement, liste). |
+| Comment l'utilisateur reste-t-il connecté ? | Le jeton JWT est dans `flutter_secure_storage` ; au démarrage, `restoreSession()` le relit et appelle `/users/me`. |
+| Comment le jeton est-il envoyé ? | Un intercepteur Dio ajoute `Authorization: Bearer …` à chaque requête ; un 401 déconnecte automatiquement l'utilisateur. |
+| Comment fonctionne la navigation ? | Routes nommées pour les pages générales (avec une garde `_ProtectedPage`), `Navigator.push` avec paramètres dans le constructeur pour les pages de module, `TabBar` et `NavigationBar` pour les sous-parties. |
+| Comment passer des données à une page et en récupérer ? | Par le constructeur (`MedicationFormPage(patientId: …)`) ; retour avec `Navigator.pop(context, true)` récupéré par `await Navigator.push`. |
+| Comment l'application sait-elle quel écran afficher ? | `authState.when(loading/data/error)` dans `MediCareApp`, puis le rôle de l'utilisateur dans `HomePage` (médecin → tableau de bord médecin). |
+| Comment les listes sont-elles affichées ? | `ListView.builder` pour les longues listes (rendez-vous, conversation NutriCoach), `ListView` / `Column` pour les écrans courts, `RefreshIndicator` pour tirer et rafraîchir. |
+| Comment validez-vous les formulaires ? | `Form` + `GlobalKey<FormState>` + `validator` sur chaque `TextFormField`, et `validate()` avant l'envoi. |
+| Comment appelez-vous l'API ? | `ref.read(apiClientProvider).dio.get/post/put/patch/delete(…)`, en `async`/`await`, avec gestion de `DioException`. |
+| Comment transformez-vous le JSON ? | Dio décode le JSON en `Map` ; chaque modèle a un constructeur `fromJson`. |
+| Comment l'application parle-t-elle au serveur depuis le téléphone ? | L'URL est donnée à la compilation (`--dart-define=API_BASE_URL`) ; Android autorise ce HTTP local via `network_security_config.xml`. |
+| Comment les rappels de médicaments fonctionnent-ils application fermée ? | `flutter_local_notifications` programme des notifications à l'heure locale (`timezone`), uniquement sur le téléphone du patient. |
+| Comment l'écran se met-il à jour après un ajout ? | Retour `pop(true)` puis rechargement, ou `healthRevisionProvider` incrémenté que les onglets écoutent avec `ref.listen`. |
+| Comment gérez-vous le chargement et les erreurs ? | Booléens d'état (`_loading`, `_error`) avec `CircularProgressIndicator`, message et bouton « Réessayer » ; `FutureBuilder` pour l'aperçu des documents. |
+| Comment les graphiques sont-ils faits ? | Avec `CustomPainter` et `Canvas` (courbes et anneaux), sans bibliothèque externe. |
+| Comment testez-vous le front ? | 61 tests de widgets ; les dépendances sont remplacées par `ProviderScope(overrides: …)`. |
+| L'application fonctionne-t-elle sur d'autres plateformes ? | Oui : le même code tourne sur Android et dans le navigateur (Flutter web) ; seules certaines fonctions natives (appareil photo, notifications) dépendent de la plateforme. |
+
+---
+
+## 3. Modules
 
 ### M1 · Authentification et sécurité
 
@@ -176,6 +384,23 @@ Toutes les autres tables pointent vers `users`. Ce module décide qui est connec
 | Profil et réglages | `profile_page.dart · edit_profile_page.dart · settings_page.dart` | **GET** /users/me · **PUT** /users/me · **PUT** /users/me/password | UserController | `users`, `password_history` |
 | Sécurité (MFA, demandes) | `security_page.dart` | **GET** /security · **POST** /security/challenge, /security/confirm, /security/role-requests, /security/merges | SecurityController | `users`, `email_challenge`, `recovery_code`, `role_change_request`, `account_merge_request` |
 | Administration | `security_page.dart (admin)` | **GET** /security/admin/audit, /duplicates · **POST** /security/admin/role-requests/{id}, /merges/{id} | SecurityController (ADMIN) | `security_audit_event`, `role_change_request`, `account_merge_request`, `users` |
+
+#### Architecture front-end
+
+| Fichier (`lib/…`) | Type | Rôle |
+|---|---|---|
+| `features/auth/authentication_state.dart` | `StateNotifier<AsyncValue<AuthUser?>>` + provider | Cœur de la session : `restoreSession`, `login`, `register`, `logout`, `expireSession` |
+| `features/auth/auth_repository.dart` | classe + `Provider` | Tous les appels `/auth/…`, `/users/me`, `/security/…` ; renvoie `AuthSession` |
+| `features/auth/auth_user.dart` | modèle | `AuthUser.fromJson`, libellé du rôle (`roleLabel`) |
+| `features/auth/auth_validation.dart` | classe statique | Validateurs des champs (identifiant, email, mot de passe) |
+| `features/auth/auth_error.dart` | fonctions | Traduction des erreurs serveur en messages français |
+| `login_page.dart`, `register_page.dart`, `verification_page.dart`, `forgot_password_page.dart` | `ConsumerStatefulWidget` | Écrans avec `Form`, chargement et erreurs locales |
+| `widgets/auth_scaffold.dart`, `widgets/auth_form_widgets.dart` | widgets réutilisables | Gabarit commun (`AuthScaffold`), `AuthPasswordField`, `PasswordStrengthIndicator`, `AuthSubmitButton` |
+| `features/profile/…`, `features/security/security_page.dart` | `ConsumerWidget` / `ConsumerStatefulWidget` | Profil, réglages ; Sécurité en onglets (Protection, Mes rôles, Mes comptes, Administration) |
+
+**Flux de connexion :** `LoginPage` valide le formulaire → `ref.read(authenticationStateProvider.notifier).login(…)` → `AuthRepository.login` (`POST /auth/login`) → si une vérification est demandée, `Navigator.push(VerificationPage)` ; sinon le jeton est enregistré, l'état passe à `data(user)` et `MediCareApp` affiche automatiquement `HomePage`.
+
+**Points à retenir :** l'état de session est un `AsyncValue` (chargement / données / erreur) ; la déconnexion vide le stockage avant même la réponse du serveur ; les routes nommées privées sont protégées par `_ProtectedPage`.
 
 #### Données
 
@@ -353,6 +578,22 @@ Un rendez-vous relie un patient et un médecin. Tant qu'il n'est pas annulé, ce
 | Attribution des secrétaires (admin) | `secretary_appointments_page.dart` | **GET** · **POST** · **DELETE** /secretary/admin/assignments/{id} | SecretaryAppointmentController | `appointment_secretary_doctors` |
 | Envoi des rappels | `secretary_appointments_page.dart` + tâche planifiée | **POST** /secretary/reminders/run · cron toutes les heures | AppointmentReminderService | `appointment.reminder_sent_at` |
 
+#### Architecture front-end
+
+| Fichier (`lib/…`) | Type | Rôle |
+|---|---|---|
+| `features/appointments/appointments_page.dart` | `ConsumerStatefulWidget` | Écran patient complet : agenda / liste, recherche, formulaire, risque d'absence, suggestion de spécialité |
+| `features/appointments/secretary_appointments_page.dart` | `ConsumerStatefulWidget` | Espace secrétaire ; fenêtre d'affectation des secrétaires (administrateur) |
+
+**Structure de l'écran Rendez-vous :**
+
+- Bascule **Agenda / Liste** avec `ToggleButtons` ; l'agenda affiche la semaine du jour choisi, la liste utilise `ListView.builder`.
+- Recherche par `TextField` avec `onChanged` (filtre immédiat) et filtres par statut.
+- Formulaire `Form` + `GlobalKey<FormState>` : médecin et type de consultation en `DropdownButtonFormField`, date et heure avec `showDatePicker` et `showTimePicker`, motif en `TextFormField`.
+- Fenêtres `showDialog` : confirmation de suppression, explication du risque d'absence, suggestion de spécialité.
+
+**État et réseau :** tout l'état est local à l'écran (`setState` : liste, rendez-vous en cours d'édition, mode d'affichage) ; les appels passent directement par `ref.read(apiClientProvider).dio` (`GET /appointments`, `POST`, `PUT`, `DELETE`, `GET /appointments/{id}/no-show-risk`).
+
 #### Données
 
 ```mermaid
@@ -484,6 +725,24 @@ Le médecin envoie l'ordonnance et crée le planning ; le patient reçoit son tr
 | Envoyer une ordonnance (médecin) | `prescription_upload_page.dart` | **GET** /prescriptions/patients · **POST** /prescriptions/extract-medications, /prescriptions/upload | PrescriptionController (Tesseract) + PrescriptionDocumentSync | `prescription`, `medication`, `doctor_patient_assignments`, `medical_documents` |
 | Dossier patient, onglet Médicaments | `patient_file_page.dart` | **GET** /medications?patientId=, /medications/intakes?patientId= | MedicationController | `medication`, `medication_reminder` |
 | Observance des patients | `patients_adherence_page.dart` | **GET** /medications/adherence/patients?days=7 | MedicationController | `medication_reminder (lecture)` |
+
+#### Architecture front-end
+
+| Fichier (`lib/features/medications/…`) | Type | Rôle |
+|---|---|---|
+| `medications_page.dart` | `ConsumerStatefulWidget` | Mes traitements ; programme les rappels locaux du patient ; redirige un médecin vers son tableau de bord |
+| `medication_card.dart` | `StatelessWidget` | Carte d'un médicament ; actions transmises par des callbacks (`onEdit`, `onHistory`, `onSchedule`…) |
+| `medication_form_page.dart` | `ConsumerStatefulWidget` | Formulaire du planning (horaires `showTimePicker`, jours, dates) ; paramètres `patientId`, `prescriptionId`, `suggestion`, `draftOnly` |
+| `prescription_upload_page.dart` | `ConsumerStatefulWidget` | Envoi d'ordonnance : recherche du patient (temporisée avec `Timer`), `file_picker`, préremplissage, `PopScope` |
+| `medication_history_page.dart`, `medication_stock_page.dart`, `medication_statistics_page.dart` | `ConsumerStatefulWidget` | Historique des prises, stock, observance |
+| `patients_adherence_page.dart` | `ConsumerStatefulWidget` + fonction `pickFollowedPatient` | Observance de chaque patient (médecin), choix d'un patient en `SimpleDialog` |
+| `medication_assistant.dart`, `medication_assistant_page.dart` | classe + écran de conversation | Assistant traitement : réponses calculées localement |
+| `medication_notifications.dart` | service (singleton) | `flutter_local_notifications` + `timezone` : programmation et annulation des rappels |
+| `medication.dart` | modèles | `Medication`, `MedicationReminder`, `MedicationDraft`, `Prescription`, `PrescriptionMedicationSuggestion` (`fromJson`, `toRequest`) |
+
+**Flux « préremplir le planning » :** le fichier choisi est envoyé en `FormData` → la liste de propositions revient → chaque proposition ouvre `MedicationFormPage(draftOnly: true, suggestion: …)` qui renvoie un `MedicationDraft` par `Navigator.pop` → à l'envoi, les brouillons sont transformés en requêtes (`toRequest`) et enregistrés.
+
+**Flux « confirmer une prise » (patient) :** `showModalBottomSheet` liste les prises du jour → bouton Effectuée / Manquée / Ignorer / Reporter → `POST /medications/reminders/{id}/{action}` → la feuille et la liste se rechargent.
 
 #### Données
 
@@ -700,6 +959,26 @@ Si aucun écran n'est reconnu ou si une valeur est hors plage, le message demand
 | Patients suivis (médecin) | `followed_patients_page.dart · doctor_health_patients_page.dart` | **GET** /health/patients | DoctorHealthController | `doctor_patient_assignments`, `appointment`, `patient_doctor` |
 | Dossier patient (médecin) | `patient_file_page.dart` | Routes ci-dessus avec `?patientId=` + /medications, /documents | plusieurs | toutes les tables du patient |
 
+#### Architecture front-end
+
+| Fichier (`lib/features/health/…`) | Type | Rôle |
+|---|---|---|
+| `health_page.dart` | `ConsumerStatefulWidget` + `TabController` | Conteneur à 3 onglets : Tableau de bord, Mesures, Nutrition ; reçoit `patient` quand un médecin consulte |
+| `health_dashboard_tab.dart` | `ConsumerStatefulWidget` | Dernières valeurs, IMC (`_BmiScale`), objectifs du jour, raccourcis |
+| `measures_tab.dart`, `measure_form.dart` | `ConsumerStatefulWidget` | Historique filtré ; formulaire en `showModalBottomSheet` organisé par appareil, avec lecture par photo |
+| `nutrition_tab.dart`, `meal_form_page.dart` | `ConsumerStatefulWidget` | Journal des repas, choix d'aliments (`ListView.separated`), hydratation |
+| `health_goals_page.dart`, `health_stats_page.dart` | `ConsumerStatefulWidget` | Objectifs ; statistiques avec courbes `CustomPainter` |
+| `health_ai_page.dart`, `ai_food_page.dart`, `nutrition_chat_page.dart` | `ConsumerStatefulWidget` | Analyse santé IA, reconnaissance des aliments (`image_picker`), NutriCoach (`ListView.builder`) |
+| `health_pdf_export.dart` | fonctions | Rapport PDF avec `pdf` (`pw.MultiPage`) et impression / partage avec `printing` |
+| `health_api.dart` | outils communs | `HealthScope` (`InheritedWidget`), `healthRevisionProvider`, `aiDio` (délais longs), `pushHealthPage`, messages d'erreur |
+| `health_theme.dart` | thème + calculs | `HealthColors`, `HealthCard`, `computeBmi`, `formatNumber`, `parseUserNumber`, catégories d'IMC |
+| `doctor_health_patients_page.dart` | `ConsumerStatefulWidget` | Patients suivis avec constantes, alertes, accès au dossier |
+| `../home/patient_file_page.dart` | `ConsumerStatefulWidget` + `DefaultTabController` | Dossier patient du médecin : onglets Santé, Médicaments, Documents (`AutomaticKeepAliveClientMixin`) |
+
+**Mode médecin sans dupliquer les écrans :** `HealthPage(patient: …)` place un `HealthScope` au-dessus des onglets ; chaque écran lit le patient avec `HealthScope.patientOf(context)` et ajoute `?patientId=` à ses requêtes. Le même code sert au patient et au médecin.
+
+**Rafraîchissement croisé :** après un ajout (mesure, repas, eau), `notifyHealthDataChanged(ref)` incrémente `healthRevisionProvider` ; le tableau de bord et les autres onglets, abonnés avec `ref.listen`, se rechargent seuls.
+
 #### Données
 
 ```mermaid
@@ -885,6 +1164,27 @@ Les notifications sont créées automatiquement quand les modules 2, 3 et 4 écr
 | Partage par lien | `document_shares_page.dart` | **POST** /documents/{id}/shares · **PATCH** …/shares/{id}/revoke · page publique /share/document | DocumentShareController, SharedDocumentController | `document_shares`, `document_share_accesses` |
 | Analyse d'un document | `document_analysis_page.dart` | **POST** /documents/{id}/analysis · **POST** /documents/{id}/analysis/confirm | DocumentAnalysisController + worker | `document_analyses`, `reminders` |
 
+#### Architecture front-end
+
+| Fichier (`lib/…`) | Type | Rôle |
+|---|---|---|
+| `core/widgets/care_workspace.dart` | widgets partagés | `CareWorkspace` (gabarit avec `NavigationBar` Notifications ↔ Documents), `CareHero`, `CareStats`, `CarePanel`, `careTheme()` |
+| `features/notifications/pages/notifications_page.dart` | `ConsumerStatefulWidget` | Boîte de réception, rappels, contacts de soin |
+| `features/notifications/pages/notification_admin_page.dart` | `ConsumerStatefulWidget` | Administration des notifications |
+| `features/notifications/providers/notification_repository.dart` | dépôt + `Provider` | Appels `/notifications`, `/reminders`, `/notifications/care` |
+| `features/notifications/widgets/notification_badge.dart` | `ConsumerWidget` + `FutureProvider` | Badge des non-lus (`Badge.count`), rafraîchi toutes les 15 s |
+| `features/notifications/widgets/…` | widgets | `NotificationCard`, `ReminderCard`, `ReminderForm`, `DoctorDialog` (Mes médecins), `AddPatientButton` |
+| `features/documents/pages/documents_page.dart` | `ConsumerStatefulWidget` | Bibliothèque : recherche (temporisée), filtres, grille ou liste, statistiques ; paramètre `initialCategory` |
+| `features/documents/pages/document_preview_page.dart` | `StatefulWidget` + `FutureBuilder` | Aperçu PDF avec `pdfrx` (`PdfViewer.data`) ou image (`Image.memory`) |
+| `features/documents/pages/document_shares_page.dart` | `StatefulWidget` | Liens de partage, `QrImageView` (`qr_flutter`), historique des ouvertures |
+| `features/documents/pages/document_analysis_page.dart` | `StatefulWidget` | Analyse IA : suivi de l'état, relecture et confirmation |
+| `features/documents/providers/document_repository.dart` | dépôt + `Provider` | Liste (`patientId`, `category`), envoi `FormData`, contenu en octets, partage, analyse |
+| `features/documents/widgets/document_card.dart`, `document_upload_form.dart` | widgets | Carte de document ; formulaire d'envoi en `showDialog` (`file_picker`) |
+
+**Flux « envoyer une ordonnance » depuis le dossier patient :** `showDialog(DocumentUploadForm(prescription: true))` renvoie titre, catégorie et fichier → `DocumentRepository.upload(patientId: …)` → `SnackBar` de confirmation → la liste de l'onglet se recharge.
+
+**Pourquoi des dépôts ici :** les mêmes appels servent à plusieurs écrans (bibliothèque, dossier patient, aperçu, partage) ; le dépôt évite de répéter les URL et se remplace facilement par un faux dans les tests (`care_workspace_test.dart`).
+
 #### Données
 
 ```mermaid
@@ -1020,7 +1320,7 @@ Parcours vérifié sur la vraie base (données de test supprimées ensuite) :
 
 ---
 
-## 3. Notions du cours utilisées dans le projet
+## 4. Notions du cours utilisées dans le projet
 
 Vérification faite dans le code Flutter (`frontend/lib`) pour chaque notion des supports de cours.
 
@@ -1103,11 +1403,11 @@ Vérification faite dans le code Flutter (`frontend/lib`) pour chaque notion des
 
 ---
 
-## 4. Compiler et lancer l'application
+## 5. Compiler et lancer l'application
 
 Deux méthodes : **A · en local** sur le PC (application dans le navigateur) et **B · sur l'appareil physique** Android (CRT NX1) en Wi-Fi. Les deux utilisent le même backend et la même base PostgreSQL. Toutes les commandes sont pour **PowerShell** ; chaque processus long (backend, application) tourne dans sa propre fenêtre.
 
-### 4.1 Prérequis (une seule fois)
+### 5.1 Prérequis (une seule fois)
 
 | Outil | Version | Vérification |
 |---|---|---|
@@ -1133,7 +1433,7 @@ cd C:\Users\OUERFELLI\Desktop\Dev_Mobile-main\frontend
 flutter pub get
 ```
 
-### 4.2 Étape commune : lancer le backend
+### 5.2 Étape commune : lancer le backend
 
 ```powershell
 # Fenêtre 1 : laisser ouverte
@@ -1158,7 +1458,7 @@ cd C:\Users\OUERFELLI\Desktop\Dev_Mobile-main\backend
 mvn spring-boot:run "-Dspring-boot.run.profiles=dev"
 ```
 
-### 4.3 Méthode A · en local (navigateur)
+### 5.3 Méthode A · en local (navigateur)
 
 **Développement, avec rechargement à chaud :**
 
@@ -1182,7 +1482,7 @@ python -m http.server 5180
 
 Ouvrir `http://localhost:5180` puis **Ctrl+F5** pour charger la dernière version. `--pwa-strategy=none` évite que le navigateur garde une ancienne version en cache.
 
-### 4.4 Méthode B · sur l'appareil physique (CRT NX1, en Wi-Fi)
+### 5.4 Méthode B · sur l'appareil physique (CRT NX1, en Wi-Fi)
 
 Le câble USB ne sert qu'à l'installation ; ensuite l'application parle au backend par le Wi-Fi.
 
@@ -1228,7 +1528,7 @@ flutter run -d AYAV6R3B27000131 --dart-define=API_BASE_URL=http://192.168.1.199:
 
 Si le PC change de réseau Wi-Fi, refaire les étapes 2, 3, 7 et 8 : l'adresse est intégrée à l'APK.
 
-### 4.5 Tests automatisés
+### 5.5 Tests automatisés
 
 ```powershell
 cd C:\Users\OUERFELLI\Desktop\Dev_Mobile-main\backend
@@ -1240,7 +1540,7 @@ flutter analyze
 flutter test                   # 61 tests (écrans, sessions, rôles, dossier patient, synchronisation)
 ```
 
-### 4.6 Arrêter et dépanner
+### 5.6 Arrêter et dépanner
 
 | Problème | Solution |
 |---|---|
@@ -1251,7 +1551,7 @@ flutter test                   # 61 tests (écrans, sessions, rôles, dossier pa
 | Les écrans IA répondent « mode démonstration » | Lancer Ollama (`ollama serve`) et vérifier `ollama list` |
 | Repartir de zéro | `mvn clean` dans `backend`, `flutter clean` puis `flutter pub get` dans `frontend` |
 
-### 4.7 Comptes de démonstration (profil `dev`)
+### 5.7 Comptes de démonstration (profil `dev`)
 
 | Rôle | Email | Mot de passe |
 |---|---|---|
