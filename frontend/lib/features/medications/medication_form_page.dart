@@ -64,6 +64,11 @@ class _MedicationFormPageState extends ConsumerState<MedicationFormPage> {
       widget.medication?.prescriptionId != null;
   bool get _ocrReview => widget.suggestion != null;
 
+  /// Médecin qui ajoute manuellement un médicament au planning d'un patient :
+  /// formulaire réduit au médicament et à ses horaires (sans état, consignes, notes ni stock).
+  bool get _doctorManualAdd =>
+      widget.patientId != null && widget.medication == null;
+
   String? get _dateRangeError => medicationDateRangeError(_startDate, _endDate);
 
   @override
@@ -626,7 +631,7 @@ class _MedicationFormPageState extends ConsumerState<MedicationFormPage> {
                         setState(() => _allowNoEndDate = value ?? false)
                     : null,
               ),
-            if (!_fromPrescription) ...[
+            if (!_fromPrescription && !_doctorManualAdd) ...[
               const SizedBox(height: 12),
               DropdownButtonFormField<String>(
                 initialValue: _status,
@@ -641,6 +646,7 @@ class _MedicationFormPageState extends ConsumerState<MedicationFormPage> {
                 onChanged: (v) => setState(() => _status = v ?? 'active'),
               ),
             ],
+            if (!_doctorManualAdd) ...[
             const SizedBox(height: 12),
             TextFormField(
               controller: _instructions,
@@ -654,6 +660,7 @@ class _MedicationFormPageState extends ConsumerState<MedicationFormPage> {
               maxLines: 2,
               decoration: const InputDecoration(labelText: 'Notes'),
             ),
+            ],
             if (_ocrReview) ...[
               const SizedBox(height: 8),
               CheckboxListTile(
@@ -666,7 +673,7 @@ class _MedicationFormPageState extends ConsumerState<MedicationFormPage> {
                     setState(() => _ocrReviewed = value ?? false),
               ),
             ],
-            if (!_fromPrescription) ...[
+            if (!_fromPrescription && !_doctorManualAdd) ...[
               const Divider(height: 32),
               Text('Stock', style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: 8),

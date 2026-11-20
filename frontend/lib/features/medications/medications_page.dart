@@ -11,6 +11,7 @@ import 'medication_assistant_page.dart';
 import 'medication_card.dart';
 import '../documents/pages/documents_page.dart';
 import 'medication_form_page.dart';
+import 'today_intakes_card.dart';
 import 'medication_history_page.dart';
 import 'medication_notifications.dart';
 import 'medication_statistics_page.dart';
@@ -26,6 +27,7 @@ class MedicationsPage extends ConsumerStatefulWidget {
 class _MedicationsPageState extends ConsumerState<MedicationsPage> {
   List<Medication> items = [];
   bool loading = true;
+  int _intakesRefresh = 0;
 
   @override
   void initState() {
@@ -49,6 +51,7 @@ class _MedicationsPageState extends ConsumerState<MedicationsPage> {
       setState(() {
         items = loaded;
         loading = false;
+        _intakesRefresh++;
       });
       // Les rappels sur l'appareil ne concernent que le patient lui-même
       // (un administrateur voit les traitements d'autres personnes).
@@ -342,6 +345,8 @@ class _MedicationsPageState extends ConsumerState<MedicationsPage> {
               padding: const EdgeInsets.only(bottom: 100),
               children: [
                 const _MedicationHero(),
+                // Le patient coche ses prises du jour, horaire par horaire.
+                if (patientReadOnly) TodayIntakesCard(refreshKey: _intakesRefresh),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(20, 10, 20, 14),
                   child: Row(
