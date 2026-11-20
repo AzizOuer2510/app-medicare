@@ -48,8 +48,13 @@ class _MedicationsPageState extends ConsumerState<MedicationsPage> {
             (value) => Medication.fromJson(value),
           )
           .toList();
+      final patient =
+          ref.read(authenticationStateProvider).valueOrNull?.role == 'USER';
       setState(() {
-        items = loaded;
+        // Un médicament supprimé (arrêté) par le médecin disparaît du planning du patient.
+        items = patient
+            ? loaded.where((m) => m.status != 'discontinued').toList()
+            : loaded;
         loading = false;
         _intakesRefresh++;
       });

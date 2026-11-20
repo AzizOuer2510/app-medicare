@@ -382,7 +382,7 @@ void main() {
         '/health/patients':
             '[{"id":7,"fullName":"Patient Exemple","sources":["CARE_LINK"],"alertCount":0,"alerts":[]}]',
         '/medications':
-            '[{"id":3,"name":"Doliprane","dosage":"1 g","status":"ACTIVE","reminderTimes":["08:00:00"],"prescriptionId":null}]',
+            '[{"id":3,"name":"Doliprane","dosage":"1 g","status":"ACTIVE","reminderTimes":["08:00:00"],"prescriptionId":4,"prescriberId":2,"prescriberName":"Dr Alice Martin"}]',
         '/medications/intakes':
             '[{"id":31,"medicationId":3,"medicationName":"Doliprane","date":"2026-11-18","time":"08:00:00","status":"TAKEN","takenAt":"2026-11-18T08:05:00"},'
             '{"id":30,"medicationId":3,"medicationName":"Doliprane","date":"2026-11-17","time":"08:00:00","status":"MISSED"}]',
@@ -441,6 +441,9 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('Doliprane'), findsWidgets);
     expect(find.text('Pris'), findsWidgets);
+    // Le médecin prescripteur peut modifier ou supprimer le médicament.
+    expect(find.byTooltip('Modifier ou supprimer'), findsOneWidget);
+    expect(find.textContaining('Prescrit par Dr Alice Martin'), findsOneWidget);
     final medicationList = find
         .descendant(
             of: find.byKey(const Key('patient-medications-list')),

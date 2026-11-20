@@ -63,7 +63,9 @@ public class MedicationController {
             Long prescriptionId, String pharmaceuticalForm, String notes, BigDecimal unitsPerDose,
             List<DayOfWeek> weekdays, MedicationStatus status, boolean remindersEnabled,
             boolean stockTracked, BigDecimal stockQuantity, String stockUnit, BigDecimal lowStockThreshold,
-            BigDecimal packageQuantity, boolean lowStock, Long patientId, String patientName) {
+            BigDecimal packageQuantity, boolean lowStock, Long patientId, String patientName,
+            /** Médecin qui a prescrit le médicament : lui seul peut le modifier ou le supprimer. */
+            Long prescriberId, String prescriberName) {
         static MedicationResponse from(Medication m) {
             BigDecimal quantity = nvl(m.getStockQuantity());
             BigDecimal threshold = nvl(m.getLowStockThreshold());
@@ -77,7 +79,9 @@ public class MedicationController {
                     tracked && threshold.signum() > 0
                             && quantity.compareTo(threshold) <= 0,
                     m.getUser() == null ? null : m.getUser().getId(),
-                    m.getUser() == null ? null : m.getUser().getFullName());
+                    m.getUser() == null ? null : m.getUser().getFullName(),
+                    m.getPrescription() == null ? null : m.getPrescription().getDoctor().getId(),
+                    m.getPrescription() == null ? null : m.getPrescription().getDoctor().getFullName());
         }
     }
 

@@ -13,6 +13,8 @@ import '../documents/widgets/document_card.dart';
 import '../documents/widgets/document_upload_form.dart';
 import '../health/health_api.dart';
 import '../health/health_page.dart';
+import '../auth/authentication_state.dart';
+import '../medications/medication.dart';
 import '../medications/medication_form_page.dart';
 import '../medications/medication_statistics_page.dart';
 
@@ -286,6 +288,59 @@ class _MedicationsTabState extends ConsumerState<_MedicationsTab>
 
   int _count(String status) => _intakes.where((i) => i['status'] == status).length;
 
+  /// Un médecin ne modifie ou ne supprime que les médicaments qu'il a prescrits.
+  bool _isMine(Map<String, dynamic> m) {
+    final me = ref.read(authenticationStateProvider).valueOrNull?.id;
+    return me != null && (m['prescriberId'] as num?)?.toInt() == me;
+  }
+
+  Future<void> _editMedication(Map<String, dynamic> m) async {
+    final changed = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => MedicationFormPage(medication: Medication.fromJson(m)),
+      ),
+    );
+    if (changed == true && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('${m['name']} modifié : le planning de ${widget.patientName} est à jour.')));
+      await _load();
+    }
+  }
+
+  Future<void> _deleteMedication(Map<String, dynamic> m) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Supprimer ${m['name']} ?'),
+        content: Text(
+            'Le médicament est retiré du planning de ${widget.patientName} et ses prochaines prises sont annulées. '
+            'L’historique des prises déjà faites est conservé.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Annuler')),
+          FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: const Color(0xFFB3261E)),
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Supprimer')),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await ref.read(apiClientProvider).dio.delete('/medications/${m['id']}');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('${m['name']} supprimé du planning de ${widget.patientName}.')));
+      await _load();
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(_apiError(error, 'Suppression impossible.'))));
+    }
+  }
+
   /// Le médecin ajoute un médicament et ses horaires : ils arrivent dans le planning du patient.
   Future<void> _addToPlanning() async {
     final added = await Navigator.push<bool>(
@@ -365,8 +420,32 @@ class _MedicationsTabState extends ConsumerState<_MedicationsTab>
                   subtitle: Text([
                     if ((m['reminderTimes'] as List?)?.isNotEmpty == true)
                       'Prises : ${(m['reminderTimes'] as List).map((t) => t.toString().substring(0, 5)).join(', ')}',
-                    if (m['prescriptionId'] == null) 'Ajouté par le patient',
+                    if (m['prescriberName'] != null) 'Prescrit par ${m['prescriberName']}',
                   ].join(' · ')),
+                  trailing: _isMine(m)
+                      ? PopupMenuButton<String>(
+                          tooltip: 'Modifier ou supprimer',
+                          onSelected: (action) => action == 'edit'
+                              ? _editMedication(m)
+                              : _deleteMedication(m),
+                          itemBuilder: (_) => const [
+                            PopupMenuItem(
+                              value: 'edit',
+                              child: ListTile(
+                                leading: Icon(Icons.edit_outlined),
+                                title: Text('Modifier'),
+                              ),
+                            ),
+                            PopupMenuItem(
+                              value: 'delete',
+                              child: ListTile(
+                                leading: Icon(Icons.delete_outline, color: Color(0xFFB3261E)),
+                                title: Text('Supprimer'),
+                              ),
+                            ),
+                          ],
+                        )
+                      : null,
                 ),
               ),
           const SizedBox(height: 12),
